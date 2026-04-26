@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>2t1-Waf · Dashboard</title>
+  <link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+
+<div id="auth-modal" class="modal hidden">
+  <div class="modal-card">
+    <h2>Authenticate</h2>
+    <p class="mut">Paste the bearer token printed by the WAF on startup.</p>
+    <input id="token-input" type="password" placeholder="Bearer token" autofocus>
+    <button id="token-submit" class="primary">Continue</button>
+    <p id="token-error" class="err hidden">Invalid token.</p>
+  </div>
+</div>
+
+<aside class="sidebar">
+  <div class="brand">
+    <span class="dot"></span>
+    <span>2t1-Waf</span>
+  </div>
+  <nav>
+    <a href="#/overview"  data-route="overview">  <span>Overview</span></a>
+    <a href="#/firewall"  data-route="firewall">  <span>Firewall</span></a>
+    <a href="#/traffic"   data-route="traffic">   <span>Live traffic</span></a>
+    <a href="#/settings"  data-route="settings">  <span>Settings</span></a>
+  </nav>
+  <div class="sidebar-foot">
+    <div class="pulse"><span class="pulse-dot"></span><span id="conn-state">connecting…</span></div>
+    <div class="version" id="version">—</div>
+  </div>
+</aside>
+
+<main>
+  <header class="topbar">
+    <div class="crumbs"><span id="page-title">Overview</span></div>
+    <div class="topbar-actions">
+      <label class="toggle">
+        <input id="under-attack" type="checkbox">
+        <span class="toggle-track"><span class="toggle-knob"></span></span>
+        <span class="toggle-label">Under-attack mode</span>
+      </label>
+    </div>
+  </header>
+
+  <!-- ================== OVERVIEW ================== -->
+  <section data-page="overview" class="page">
+    <div class="kpi-grid">
+      <div class="kpi"><div class="kpi-label">Allowed</div><div class="kpi-value ok"   id="kpi-allowed">0</div></div>
+      <div class="kpi"><div class="kpi-label">Challenged</div><div class="kpi-value warn" id="kpi-challenged">0</div></div>
+      <div class="kpi"><div class="kpi-label">Blocked</div><div class="kpi-value bad"  id="kpi-blocked">0</div></div>
+      <div class="kpi"><div class="kpi-label">Rate-limited</div><div class="kpi-value" id="kpi-rate-limited">0</div></div>
+      <div class="kpi"><div class="kpi-label">In-flight</div><div class="kpi-value"   id="kpi-in-flight">0</div></div>
+      <div class="kpi"><div class="kpi-label">Upstream errors</div><div class="kpi-value bad" id="kpi-upstream-errors">0</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>Last 60 seconds</h3></div>
+      <canvas id="ring-chart" height="160"></canvas>
+      <div class="legend">
+        <span class="lg ok">Allowed</span>
+        <span class="lg warn">Challenged</span>
+        <span class="lg bad">Blocked</span>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card"><div class="card-head"><h3>Top IPs</h3></div><div class="rows" id="top-ips"></div></div>
+      <div class="card"><div class="card-head"><h3>Top paths</h3></div><div class="rows" id="top-paths"></div></div>
+      <div class="card"><div class="card-head"><h3>Top rules</h3></div><div class="rows" id="top-rules"></div></div>
+      <div class="card"><div class="card-head"><h3>Top countries</h3></div><div class="rows" id="top-countries"></div></div>
+    </div>
+  </section>
+
+  <!-- ================== FIREWALL ================== -->
+  <section data-page="firewall" class="page hidden">
+    <div class="card">
+      <div class="card-head"><h3>Detection rules</h3></div>
+      <p class="mut">Toggle individual rule families. Changes apply immediately.</p>
+      <div class="toggles" id="rule-toggles"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>Scoring thresholds</h3></div>
+      <div class="form-row">
+        <label>Challenge at score</label>
+        <input id="threshold-challenge" type="number" min="1" max="999">
+        <button class="btn" data-save="thresholds">Save</button>
+      </div>
+      <div class="form-row">
+        <label>Block at score</label>
+        <input id="threshold-block" type="number" min="1" max="999">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>DDoS limits</h3></div>
+      <div class="form-row">
+        <label>Max concurrent in-flight per IP</label>
+        <input id="ddos-conn" type="number" min="0" max="100000">
+        <button class="btn" data-save="ddos">Save</button>
+      </div>
+      <div class="form-row">
+        <label>RPM scale during attack (basis points, 10000 = 100%)</label>
+        <input id="ddos-rpm-bps" type="number" min="100" max="10000">
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head"><h3>Allow list</h3></div>
+        <div class="form-row">
+          <input id="allow-cidr" type="text" placeholder="1.2.3.4 or 10.0.0.0/24">
+          <button class="btn" id="allow-add">Add</button>
+        </div>
+        <div class="rows" id="allow-rows"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Deny list</h3></div>
+        <div class="form-row">
+          <input id="deny-cidr" type="text" placeholder="1.2.3.4 or 10.0.0.0/24">
+          <button class="btn danger" id="deny-add">Add</button>
+        </div>
+        <div class="rows" id="deny-rows"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>Auto-banned</h3></div>
+      <p class="mut">IPs that tripped detection rules repeatedly within the configured window.</p>
+      <div class="rows" id="banned-rows"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>Blocked countries</h3></div>
+      <div class="form-row">
+        <input id="country-input" type="text" placeholder="ISO codes, comma-separated (e.g. CN, RU)">
+        <button class="btn" id="country-save">Save</button>
+      </div>
+      <div class="rows" id="country-rows"></div>
+    </div>
+  </section>
+
+  <!-- ================== TRAFFIC ================== -->
+  <section data-page="traffic" class="page hidden">
+    <div class="card">
+      <div class="card-head">
+        <h3>Live request log</h3>
+        <div class="card-actions">
+          <label class="checkbox"><input id="filter-allow" type="checkbox" checked> Allow</label>
+          <label class="checkbox"><input id="filter-challenge" type="checkbox" checked> Challenge</label>
+          <label class="checkbox"><input id="filter-block" type="checkbox" checked> Block</label>
+          <input id="filter-text" type="text" placeholder="Filter…">
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table class="event-table">
+          <thead>
+            <tr>
+              <th>Time</th><th>IP</th><th>Country</th><th>Method</th>
+              <th>Host</th><th>Path</th><th>Action</th><th>Status</th><th>Score</th><th>Rule</th>
+            </tr>
+          </thead>
+          <tbody id="event-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================== SETTINGS ================== -->
+  <section data-page="settings" class="page hidden">
+    <div class="card">
+      <div class="card-head"><h3>Authentication</h3></div>
+      <p class="mut">The bearer token is stored in <code>runtime.json</code>. Rotate by writing a new value here.</p>
+      <div class="form-row">
+        <input id="auth-token" type="text" placeholder="New token (32+ chars)">
+        <button class="btn" id="auth-save">Rotate</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>Current runtime state</h3></div>
+      <pre id="runtime-dump" class="dump">—</pre>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3>About</h3></div>
+      <p class="mut">2t1-Waf · Pingora-based L7 WAF. Static config lives in
+        <code>config/waf.toml</code>; runtime overrides written from this UI live in
+        <code>config/runtime.json</code>.</p>
+    </div>
+  </section>
+</main>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="/static/dashboard.js"></script>
+</body>
+</html>

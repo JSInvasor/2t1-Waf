@@ -1,0 +1,27 @@
+[package]
+name = "waf-proxy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "waf-proxy"
+path = "src/main.rs"
+
+[dependencies]
+waf-core = { path = "../waf-core" }
+pingora = { version = "0.8", features = ["proxy"] }
+pingora-core = "0.8"
+pingora-proxy = "0.8"
+pingora-http = "0.8"
+async-trait = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+bytes = { workspace = true }
+http = { workspace = true }
+once_cell = { workspace = true }
+percent-encoding = { workspace = true }

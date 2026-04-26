@@ -1,0 +1,92 @@
+# 2t1-Waf configuration
+# Reload with SIGHUP
+
+[server]
+# Address the WAF listens on for plain HTTP. Set "" to disable plain HTTP.
+listen = "0.0.0.0:8080"
+# TLS listener for HTTPS. Leave "" to disable.
+listen_tls = ""
+# PEM cert chain + private key for the TLS listener.
+tls_cert = ""
+tls_key  = ""
+# When > 0 and listen_tls is enabled, the plain HTTP listener will 301-redirect
+# to https on this port (set to 443 in production).
+redirect_to_https_port = 0
+# Number of Pingora worker threads. 0 = number of CPU cores.
+threads = 0
+# Trust X-Forwarded-For from this many hops (0 = use socket peer).
+trusted_proxy_hops = 0
+
+[upstream]
+# Origin server the WAF protects.
+address = "127.0.0.1:8000"
+sni = "localhost"
+tls = false
+connect_timeout_ms = 2000
+read_timeout_ms = 30000
+
+[limits]
+max_body_bytes = 1048576
+max_headers = 100
+max_header_value_bytes = 8192
+max_uri_bytes = 8192
+allowed_methods = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+
+[rate_limit]
+enabled = true
+requests_per_minute = 600
+burst = 60
+[[rate_limit.routes]]
+pattern = "^/(login|signin|auth|register|api/auth)"
+requests_per_minute = 20
+burst = 5
+
+[reputation]
+allow_cidrs = []
+deny_cidrs = []
+auto_ban_threshold_hits = 5
+auto_ban_window_secs = 60
+auto_ban_duration_secs = 3600
+
+[geoip]
+mmdb_path = ""
+block_countries = []
+suspicious_countries = []
+
+[detection]
+challenge_threshold = 40
+block_threshold = 70
+sqli   = true
+xss    = true
+traversal = true
+cmdi   = true
+lfi    = true
+suspicious_user_agents = [
+    "sqlmap", "nikto", "acunetix", "nessus", "nmap", "masscan", "zgrab",
+    "fuzz", "wpscan", "dirbuster", "gobuster", "feroxbuster", "ffuf",
+    "havij", "burpcollaborator", "qualys", "openvas", "metasploit",
+    "wfuzz", "arachni", "skipfish", "w3af", "vega", "appscan", "netsparker",
+    "rapid7", "shodan", "censys", "zaproxy", "owasp zap", "paros",
+    "python-requests", "go-http-client", "okhttp", "libwww-perl", "lwp::",
+    "curl/7.0", "curl/7.1", "curl/7.2", "wget/1.0", "java/1.4", "ruby",
+    "scrapy", "httrack", "httpie", "phantomjs", "headlesschrome",
+    "siege", "ab/", "wrk/", "vegeta", "gatling", "locust", "hey/",
+    "morfeus", "censysinspect", "expanseinc", "leakix", "internetmeasurement",
+    "muhstik", "mirai", "kinsing", "moobot", "mozi", "gafgyt",
+]
+
+[challenge]
+hmac_secret = "change-me-to-a-long-random-secret-please-change-me"
+cookie_name = "__2t1_clearance"
+cookie_ttl_secs = 1800
+pow_difficulty = 4
+
+[logging]
+format = "json"
+level = "info"
+
+[admin]
+listen = "127.0.0.1:9090"
+# When set, runtime overrides written from the dashboard are persisted here.
+# Leave "" to disable persistence.
+runtime_state_path = "config/runtime.json"
