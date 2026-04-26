@@ -1,0 +1,12 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
+*.log
+/data/
