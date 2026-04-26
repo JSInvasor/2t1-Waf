@@ -15,14 +15,19 @@ BIN="$REPO_ROOT/target/release/waf-proxy"
 
 if [[ ! -x "$BIN" ]]; then
   echo "Building release binary…"
+  apt-get update -y
+  apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev curl ca-certificates
   if ! command -v cargo >/dev/null 2>&1; then
-    echo "Installing rustup…"
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    echo "Installing rustup with stable toolchain…"
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --default-toolchain stable --profile minimal
     # shellcheck disable=SC1091
     . "$HOME/.cargo/env"
   fi
-  apt-get update -y
-  apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev
+  # If rustup is present but no default toolchain (matches the error in #FAQ).
+  if command -v rustup >/dev/null 2>&1 && ! rustup show active-toolchain >/dev/null 2>&1; then
+    rustup default stable
+  fi
   (cd "$REPO_ROOT" && cargo build --release -p waf-proxy)
 fi
 
