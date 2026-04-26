@@ -17,17 +17,29 @@ if [[ ! -x "$BIN" ]]; then
   echo "Building release binary…"
   apt-get update -y
   apt-get install -y --no-install-recommends build-essential pkg-config libssl-dev curl ca-certificates
-  if ! command -v cargo >/dev/null 2>&1; then
-    echo "Installing rustup with stable toolchain…"
+
+  # Make sure rustup + cargo are usable for the user we're running as (root,
+  # under sudo). Anything in $HOME/.cargo/bin only counts for the current user
+  # — if the operator ran "rustup default stable" as their non-root user, root
+  # still has no default. The script must set up its own.
+  export PATH="$HOME/.cargo/bin:$PATH"
+
+  if ! cargo --version >/dev/null 2>&1; then
+    echo "Installing rustup (stable, minimal profile) for $USER…"
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-      | sh -s -- -y --default-toolchain stable --profile minimal
+      | sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path
     # shellcheck disable=SC1091
     . "$HOME/.cargo/env"
   fi
-  # If rustup is present but no default toolchain (matches the error in #FAQ).
-  if command -v rustup >/dev/null 2>&1 && ! rustup show active-toolchain >/dev/null 2>&1; then
+
+  # rustup may exist already with no default toolchain (the exact error the
+  # user reported). `rustup default stable` is idempotent.
+  if command -v rustup >/dev/null 2>&1; then
+    rustup toolchain install stable >/dev/null 2>&1 || true
     rustup default stable
   fi
+
+  cargo --version || { echo "cargo still not usable; aborting"; exit 1; }
   (cd "$REPO_ROOT" && cargo build --release -p waf-proxy)
 fi
 
