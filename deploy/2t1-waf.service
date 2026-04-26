@@ -1,0 +1,50 @@
+[Unit]
+Description=2t1-Waf · L7 web application firewall
+Documentation=https://github.com/jsinvasor/2t1-waf
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=2t1waf
+Group=2t1waf
+# Ports below 1024 require this:
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+ExecStart=/usr/local/bin/waf-proxy /etc/2t1-waf/waf.toml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=2
+
+WorkingDirectory=/etc/2t1-waf
+Environment=RUST_LOG=info,pingora_core=warn,pingora_proxy=warn
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+LockPersonality=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+MemoryDenyWriteExecute=true
+
+# Allow writes only to the config dir (for runtime.json)
+ReadWritePaths=/etc/2t1-waf
+
+# File handle ceiling — DDoS-friendly default.
+LimitNOFILE=1048576
+LimitNPROC=65535
+
+[Install]
+WantedBy=multi-user.target

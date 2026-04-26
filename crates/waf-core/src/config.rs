@@ -22,7 +22,16 @@ pub struct Config {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ServerCfg {
+    #[serde(default)]
     pub listen: String,
+    #[serde(default)]
+    pub listen_tls: String,
+    #[serde(default)]
+    pub tls_cert: String,
+    #[serde(default)]
+    pub tls_key: String,
+    #[serde(default)]
+    pub redirect_to_https_port: u16,
     #[serde(default)]
     pub threads: usize,
     #[serde(default)]
@@ -176,10 +185,14 @@ fn default_log_level() -> String { "info".to_string() }
 pub struct AdminCfg {
     #[serde(default = "default_admin_listen")]
     pub listen: String,
+    #[serde(default)]
+    pub runtime_state_path: String,
 }
 
 impl Default for AdminCfg {
-    fn default() -> Self { Self { listen: default_admin_listen() } }
+    fn default() -> Self {
+        Self { listen: default_admin_listen(), runtime_state_path: String::new() }
+    }
 }
 
 fn default_admin_listen() -> String { "127.0.0.1:9090".to_string() }
@@ -202,6 +215,14 @@ impl Config {
                 "detection.challenge_threshold ({}) must be < block_threshold ({})",
                 self.detection.challenge_threshold, self.detection.block_threshold
             );
+        }
+        if self.server.listen.is_empty() && self.server.listen_tls.is_empty() {
+            anyhow::bail!("server.listen and server.listen_tls are both empty");
+        }
+        if !self.server.listen_tls.is_empty()
+            && (self.server.tls_cert.is_empty() || self.server.tls_key.is_empty())
+        {
+            anyhow::bail!("server.listen_tls set but tls_cert/tls_key missing");
         }
         Ok(())
     }

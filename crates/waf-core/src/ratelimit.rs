@@ -73,27 +73,34 @@ impl RateLimiter {
         })
     }
 
-    /// Returns Ok(()) when allowed, Err((retry_after_secs, route)) when limited.
+    /// Returns Ok(()) when allowed, Err(Limited) when limited.
     pub fn check(&self, ip: &str, path: &str) -> Result<(), Limited> {
+        self.check_scaled(ip, path, 10_000)
+    }
+
+    /// Like `check` but applies a basis-points multiplier to the RPM ceiling
+    /// (10000 = 100%). Used to clamp during "under attack" mode.
+    pub fn check_scaled(&self, ip: &str, path: &str, scale_bps: u32) -> Result<(), Limited> {
         if !self.enabled { return Ok(()); }
         let now = now_secs();
+        let scale = scale_bps.max(100);
 
-        // Per-route limit (most specific match first).
         for (idx, r) in self.routes.iter().enumerate() {
             if r.re.is_match(path) {
                 let key = format!("r{idx}|{ip}");
                 let count = self.bump(&key, now);
-                if exceeds(count, r.rpm, r.burst) {
+                let rpm = scale_rpm(r.rpm, scale);
+                if exceeds(count, rpm, r.burst) {
                     return Err(Limited { retry_after: BUCKET_SECS, scope: "route", path: path.to_string() });
                 }
-                break; // first match wins
+                break;
             }
         }
 
-        // Global limit.
         let key = format!("g|{ip}");
         let count = self.bump(&key, now);
-        if exceeds(count, self.global_rpm, self.global_burst) {
+        let rpm = scale_rpm(self.global_rpm, scale);
+        if exceeds(count, rpm, self.global_burst) {
             return Err(Limited { retry_after: BUCKET_SECS, scope: "global", path: path.to_string() });
         }
         Ok(())
@@ -122,6 +129,11 @@ fn exceeds(count: u32, rpm: u32, burst: u32) -> bool {
     // The window is BUCKETS * BUCKET_SECS = 60s, so `count` over a 60s window
     // is directly comparable to rpm. Burst is added as a one-off allowance.
     count > rpm.saturating_add(burst)
+}
+
+fn scale_rpm(rpm: u32, scale_bps: u32) -> u32 {
+    // basis points: 10_000 = 100%, 5000 = 50%, etc.
+    ((rpm as u64) * (scale_bps as u64) / 10_000) as u32
 }
 
 #[derive(Debug)]

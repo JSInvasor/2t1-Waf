@@ -5,10 +5,13 @@
 //! in isolation.
 
 pub mod config;
+pub mod connections;
 pub mod decision;
+pub mod events;
 pub mod ratelimit;
 pub mod reputation;
 pub mod rules;
+pub mod runtime;
 pub mod score;
 pub mod challenge;
 pub mod metrics;
@@ -19,3 +22,4 @@ pub use config::Config;
 pub use decision::{Action, Decision, DecisionReason};
 pub use engine::Engine;
 pub use request::RequestCtx;
+pub use runtime::Runtime;

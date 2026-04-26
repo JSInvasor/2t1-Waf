@@ -2317,6 +2317,7 @@ dependencies = [
  "bytes",
  "http",
  "once_cell",
+ "percent-encoding",
  "pingora",
  "pingora-core",
  "pingora-http",

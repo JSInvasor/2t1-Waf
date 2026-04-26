@@ -1,22 +1,38 @@
-//! Tiny admin / metrics HTTP server bound to localhost. The dashboard frontend
-//! polls these JSON endpoints. Implemented as a Pingora `Service` so it shares
-//! the same shutdown plumbing as the proxy.
+//! Admin / dashboard HTTP server. Bound to localhost by default; the operator
+//! tunnels (`ssh -L 9090:127.0.0.1:9090`) or fronts it with their own TLS
+//! reverse-proxy.
+//!
+//! Auth: every `/api/*` endpoint requires `Authorization: Bearer <token>`
+//! where `<token>` is the runtime token (printed at startup, persisted in
+//! `runtime.json`). The static dashboard at `/` is unauthenticated.
 //!
 //! Endpoints:
-//!   GET  /api/metrics         summary counters + per-second ring + top-N tables
-//!   GET  /api/banned          currently banned IPs
-//!   POST /api/unban?ip=<ip>   lift an auto-ban
-//!   GET  /healthz             liveness
-//!   GET  /                    minimal HTML dashboard
+//!   GET  /healthz                           liveness
+//!   GET  /api/state                         metrics + runtime config
+//!   GET  /api/events?since=ms&limit=N       recent decisions
+//!   GET  /api/banned                        currently banned IPs
+//!   POST /api/runtime                       update runtime overrides (JSON)
+//!   POST /api/under_attack?on=true|false    toggle "under attack" mode
+//!   POST /api/ip/allow?cidr=…               add to allow list
+//!   POST /api/ip/deny?cidr=…                add to deny list
+//!   POST /api/ip/unallow?cidr=…             remove from allow list
+//!   POST /api/ip/undeny?cidr=…              remove from deny list
+//!   POST /api/unban?ip=…                    lift an auto-ban
+//!   GET  /                                  dashboard HTML
+//!   GET  /static/dashboard.js               dashboard JS
 
 use async_trait::async_trait;
 use pingora_core::server::ShutdownWatch;
 use pingora_core::services::Service;
+use serde::Deserialize;
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
+use tokio::net::{TcpListener, TcpStream};
 use waf_core::Engine;
+
+mod assets;
 
 pub fn admin_service(engine: Arc<Engine>, listen: String) -> AdminService {
     AdminService { engine, listen }
@@ -70,165 +86,302 @@ impl Service for AdminService {
     fn threads(&self) -> Option<usize> { Some(1) }
 }
 
-async fn handle(mut s: tokio::net::TcpStream, engine: Arc<Engine>) -> std::io::Result<()> {
-    let mut buf = vec![0u8; 8192];
-    let n = s.read(&mut buf).await?;
-    if n == 0 { return Ok(()); }
-    let req = &buf[..n];
+struct ParsedReq {
+    method: String,
+    path: String,
+    query: HashMap<String, String>,
+    headers: HashMap<String, String>,
+    body: Vec<u8>,
+}
 
-    // Parse "METHOD PATH HTTP/1.1\r\n..." minimally.
-    let line_end = req.windows(2).position(|w| w == b"\r\n").unwrap_or(req.len());
-    let line = std::str::from_utf8(&req[..line_end]).unwrap_or("");
-    let mut it = line.split_whitespace();
-    let method = it.next().unwrap_or("");
-    let target = it.next().unwrap_or("/");
-
-    let (path, query) = match target.split_once('?') {
-        Some((p, q)) => (p, q),
-        None => (target, ""),
+async fn handle(mut s: TcpStream, engine: Arc<Engine>) -> std::io::Result<()> {
+    let req = match read_request(&mut s).await? {
+        Some(r) => r, None => return Ok(()),
     };
 
-    let (status, ctype, body) = route(method, path, query, &engine);
-    let head = format!(
-        "HTTP/1.1 {status} {reason}\r\n\
-         content-type: {ctype}\r\n\
-         content-length: {len}\r\n\
-         cache-control: no-store\r\n\
-         connection: close\r\n\r\n",
-        status = status,
-        reason = reason(status),
-        ctype = ctype,
-        len = body.len(),
-    );
-    s.write_all(head.as_bytes()).await?;
-    s.write_all(&body).await?;
-    Ok(())
+    let (status, ctype, body) = if req.path == "/api/stream" && req.method == "GET" {
+        if !auth_ok(&req, &engine) {
+            return write_response(&mut s, 401, "application/json", br#"{"error":"unauthorized"}"#).await;
+        }
+        return stream_events(s, engine).await;
+    } else if req.path.starts_with("/api/") {
+        if !auth_ok(&req, &engine) {
+            (401, "application/json", br#"{"error":"unauthorized"}"#.to_vec())
+        } else {
+            route_api(&req, &engine)
+        }
+    } else {
+        route_static(&req)
+    };
+
+    write_response(&mut s, status, ctype, &body).await
 }
 
-fn reason(code: u16) -> &'static str {
-    match code {
-        200 => "OK", 204 => "No Content",
-        400 => "Bad Request", 404 => "Not Found", 405 => "Method Not Allowed",
-        500 => "Internal Server Error",
-        _ => "OK",
+async fn read_request(s: &mut TcpStream) -> std::io::Result<Option<ParsedReq>> {
+    let mut buf = vec![0u8; 0];
+    let mut tmp = [0u8; 4096];
+    let mut header_end = None;
+    while header_end.is_none() {
+        let n = s.read(&mut tmp).await?;
+        if n == 0 { return Ok(None); }
+        buf.extend_from_slice(&tmp[..n]);
+        if let Some(p) = find_double_crlf(&buf) { header_end = Some(p); }
+        if buf.len() > 64 * 1024 { return Ok(None); } // header bomb defence
     }
+    let header_end = header_end.unwrap();
+    let head = std::str::from_utf8(&buf[..header_end]).unwrap_or("");
+    let mut lines = head.split("\r\n");
+    let line = lines.next().unwrap_or("");
+    let mut it = line.split_whitespace();
+    let method = it.next().unwrap_or("").to_string();
+    let target = it.next().unwrap_or("/");
+    let (path, query_str) = match target.split_once('?') {
+        Some((p, q)) => (p.to_string(), q.to_string()),
+        None => (target.to_string(), String::new()),
+    };
+
+    let mut headers = HashMap::new();
+    let mut content_length: usize = 0;
+    for h in lines {
+        if let Some((k, v)) = h.split_once(':') {
+            let k = k.trim().to_ascii_lowercase();
+            let v = v.trim().to_string();
+            if k == "content-length" {
+                content_length = v.parse().unwrap_or(0).min(1 << 20);
+            }
+            headers.insert(k, v);
+        }
+    }
+
+    let mut body = buf[header_end + 4..].to_vec();
+    while body.len() < content_length {
+        let need = content_length - body.len();
+        let mut chunk = vec![0u8; need.min(8192)];
+        let n = s.read(&mut chunk).await?;
+        if n == 0 { break; }
+        body.extend_from_slice(&chunk[..n]);
+    }
+    body.truncate(content_length);
+
+    Ok(Some(ParsedReq { method, path, query: parse_query(&query_str), headers, body }))
 }
 
-fn route(method: &str, path: &str, query: &str, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
-    match (method, path) {
-        ("GET", "/healthz") => (200, "text/plain", b"ok\n".to_vec()),
-        ("GET", "/api/metrics") => {
+fn parse_query(s: &str) -> HashMap<String, String> {
+    let mut m = HashMap::new();
+    for kv in s.split('&') {
+        if kv.is_empty() { continue; }
+        if let Some((k, v)) = kv.split_once('=') {
+            m.insert(percent_decode(k), percent_decode(v));
+        } else {
+            m.insert(percent_decode(kv), String::new());
+        }
+    }
+    m
+}
+
+fn percent_decode(s: &str) -> String {
+    use percent_encoding::percent_decode_str;
+    percent_decode_str(s).decode_utf8_lossy().to_string()
+}
+
+fn find_double_crlf(b: &[u8]) -> Option<usize> {
+    b.windows(4).position(|w| w == b"\r\n\r\n")
+}
+
+fn auth_ok(req: &ParsedReq, engine: &Engine) -> bool {
+    let token = engine.runtime.auth_token.read().clone();
+    if token.is_empty() { return true; }
+    let header = req.headers.get("authorization").map(|s| s.as_str()).unwrap_or("");
+    if let Some(rest) = header.strip_prefix("Bearer ") {
+        return rest == token;
+    }
+    if let Some(rest) = header.strip_prefix("bearer ") {
+        return rest == token;
+    }
+    // Allow ?token=… as a fallback for browser EventSource (which can't set headers).
+    req.query.get("token").map(|t| t == &token).unwrap_or(false)
+}
+
+fn route_api(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
+    match (req.method.as_str(), req.path.as_str()) {
+        ("GET", "/api/state") => {
             let snap = engine.metrics.snapshot();
-            (200, "application/json", serde_json::to_vec(&snap).unwrap_or_default())
+            let runtime = engine.runtime.snapshot();
+            let body = serde_json::json!({
+                "metrics": snap,
+                "runtime": runtime,
+                "in_flight_total": engine.conns.total(),
+                "version": env!("CARGO_PKG_VERSION"),
+            });
+            ok_json(serde_json::to_vec(&body).unwrap_or_default())
+        }
+        ("GET", "/api/events") => {
+            let since = req.query.get("since").and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+            let limit = req.query.get("limit").and_then(|s| s.parse::<usize>().ok()).unwrap_or(100).min(500);
+            let evs = if since > 0 {
+                engine.events.since(since, limit)
+            } else {
+                engine.events.recent(limit)
+            };
+            ok_json(serde_json::to_vec(&evs).unwrap_or_default())
         }
         ("GET", "/api/banned") => {
             let banned: Vec<serde_json::Value> = engine.reputations.banned().into_iter()
                 .map(|(ip, ttl)| serde_json::json!({"ip": ip.to_string(), "expires_in": ttl}))
                 .collect();
-            (200, "application/json", serde_json::to_vec(&banned).unwrap_or_default())
+            ok_json(serde_json::to_vec(&banned).unwrap_or_default())
         }
+        ("POST", "/api/runtime") => {
+            #[derive(Deserialize)]
+            struct Patch {
+                #[serde(default)] under_attack: Option<bool>,
+                #[serde(default)] challenge_threshold: Option<u32>,
+                #[serde(default)] block_threshold: Option<u32>,
+                #[serde(default)] max_concurrent_per_ip: Option<u32>,
+                #[serde(default)] rpm_under_attack_bps: Option<u32>,
+                #[serde(default)] rules: Option<RulesPatch>,
+                #[serde(default)] blocked_countries: Option<Vec<String>>,
+            }
+            #[derive(Deserialize)]
+            struct RulesPatch {
+                #[serde(default)] sqli: Option<bool>,
+                #[serde(default)] xss: Option<bool>,
+                #[serde(default)] traversal: Option<bool>,
+                #[serde(default)] cmdi: Option<bool>,
+                #[serde(default)] lfi: Option<bool>,
+                #[serde(default)] bot_ua: Option<bool>,
+                #[serde(default)] rate_limit: Option<bool>,
+            }
+            let patch: Patch = match serde_json::from_slice(&req.body) {
+                Ok(p) => p,
+                Err(e) => return bad_request(&format!("invalid json: {e}")),
+            };
+            let r = &engine.runtime;
+            use std::sync::atomic::Ordering;
+            if let Some(v) = patch.under_attack { r.under_attack.store(v, Ordering::Relaxed); }
+            if let Some(v) = patch.challenge_threshold { r.challenge_threshold.store(v, Ordering::Relaxed); }
+            if let Some(v) = patch.block_threshold     { r.block_threshold.store(v, Ordering::Relaxed); }
+            if let Some(v) = patch.max_concurrent_per_ip { r.max_concurrent_per_ip.store(v, Ordering::Relaxed); }
+            if let Some(v) = patch.rpm_under_attack_bps  { r.rpm_under_attack_bps.store(v, Ordering::Relaxed); }
+            if let Some(rp) = patch.rules {
+                if let Some(v) = rp.sqli      { r.rules.sqli.store(v, Ordering::Relaxed); }
+                if let Some(v) = rp.xss       { r.rules.xss.store(v, Ordering::Relaxed); }
+                if let Some(v) = rp.traversal { r.rules.traversal.store(v, Ordering::Relaxed); }
+                if let Some(v) = rp.cmdi      { r.rules.cmdi.store(v, Ordering::Relaxed); }
+                if let Some(v) = rp.lfi       { r.rules.lfi.store(v, Ordering::Relaxed); }
+                if let Some(v) = rp.bot_ua    { r.rules.bot_ua.store(v, Ordering::Relaxed); }
+                if let Some(v) = rp.rate_limit{ r.rules.rate_limit.store(v, Ordering::Relaxed); }
+            }
+            if let Some(c) = patch.blocked_countries {
+                *r.blocked_countries.write() = c.into_iter().map(|s| s.to_ascii_uppercase()).collect();
+            }
+            let _ = r.persist();
+            ok_json(serde_json::to_vec(&r.snapshot()).unwrap_or_default())
+        }
+        ("POST", "/api/under_attack") => {
+            let on = req.query.get("on").map(|v| v == "true").unwrap_or(false);
+            engine.runtime.under_attack.store(on, std::sync::atomic::Ordering::Relaxed);
+            let _ = engine.runtime.persist();
+            ok_json(format!(r#"{{"under_attack":{on}}}"#).into_bytes())
+        }
+        ("POST", "/api/ip/allow") => with_cidr(req, |c| engine.runtime.add_allow(c)),
+        ("POST", "/api/ip/deny")  => with_cidr(req, |c| engine.runtime.add_deny(c)),
+        ("POST", "/api/ip/unallow") => with_cidr(req, |c| engine.runtime.remove_allow(c)),
+        ("POST", "/api/ip/undeny")  => with_cidr(req, |c| engine.runtime.remove_deny(c)),
         ("POST", "/api/unban") => {
-            let ip = query.split('&').find_map(|kv| kv.strip_prefix("ip="));
-            match ip.and_then(|s| s.parse::<IpAddr>().ok()) {
+            let ip = req.query.get("ip").and_then(|s| s.parse::<IpAddr>().ok());
+            match ip {
                 Some(addr) => { engine.reputations.unban(addr); (204, "text/plain", vec![]) }
-                None => (400, "application/json", br#"{"error":"missing ip"}"#.to_vec()),
+                None => bad_request("missing ip"),
             }
         }
-        ("GET", "/" | "/index.html") => (200, "text/html; charset=utf-8", DASHBOARD.as_bytes().to_vec()),
         _ => (404, "application/json", br#"{"error":"not found"}"#.to_vec()),
     }
 }
 
-/// Minimal dashboard served by the admin port. The "real" dashboard can grow
-/// here over time; this is enough to verify the WAF is doing something useful.
-const DASHBOARD: &str = r##"<!doctype html>
-<html lang="en"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>2t1-Waf · live</title>
-<style>
-:root{color-scheme:dark;--bg:#0b0d12;--card:#11141b;--border:#1c2030;--mut:#8a8f9c;--fg:#e6e7ea;--ok:#3ddc97;--warn:#f7b500;--bad:#ff5470;--accent:#3a86ff}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,sans-serif}
-header{padding:18px 24px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
-header h1{margin:0;font-size:16px;font-weight:600;letter-spacing:.3px}
-header .pulse{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok);display:inline-block;margin-right:8px}
-main{padding:24px;display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
-.card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:16px}
-.card h2{margin:0 0 8px;font-size:12px;color:var(--mut);font-weight:600;text-transform:uppercase;letter-spacing:.7px}
-.kpi{font-size:28px;font-weight:600}
-.kpi .lbl{font-size:11px;color:var(--mut);margin-left:6px;text-transform:uppercase}
-.row{display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px dashed var(--border);font-variant-numeric:tabular-nums}
-.row:last-child{border-bottom:0}
-.row .v{color:var(--mut)}
-canvas{width:100%;height:120px;display:block}
-.footer{padding:12px 24px;color:var(--mut);font-size:11px;border-top:1px solid var(--border)}
-.full{grid-column:1/-1}
-.tag{display:inline-block;padding:2px 6px;border-radius:4px;background:#1c2030;color:var(--mut);font-size:11px;margin-left:6px}
-.bad{color:var(--bad)} .warn{color:var(--warn)} .ok{color:var(--ok)}
-</style></head><body>
-<header>
-  <h1><span class="pulse"></span>2t1-Waf · live</h1>
-  <div class="mut" id="upd">—</div>
-</header>
-<main>
-  <section class="card"><h2>Allowed</h2><div class="kpi ok"><span id="allowed">0</span><span class="lbl">requests</span></div></section>
-  <section class="card"><h2>Challenged</h2><div class="kpi warn"><span id="challenged">0</span><span class="lbl">requests</span></div></section>
-  <section class="card"><h2>Blocked</h2><div class="kpi bad"><span id="blocked">0</span><span class="lbl">requests</span></div></section>
-  <section class="card"><h2>Rate-limited</h2><div class="kpi"><span id="rate_limited">0</span><span class="lbl">hits</span></div></section>
+fn route_static(req: &ParsedReq) -> (u16, &'static str, Vec<u8>) {
+    match (req.method.as_str(), req.path.as_str()) {
+        ("GET", "/healthz") => (200, "text/plain", b"ok\n".to_vec()),
+        ("GET", "/" | "/index.html" | "/firewall" | "/traffic" | "/settings") =>
+            (200, "text/html; charset=utf-8", assets::DASHBOARD_HTML.as_bytes().to_vec()),
+        ("GET", "/static/dashboard.js") =>
+            (200, "application/javascript; charset=utf-8", assets::DASHBOARD_JS.as_bytes().to_vec()),
+        ("GET", "/static/dashboard.css") =>
+            (200, "text/css; charset=utf-8", assets::DASHBOARD_CSS.as_bytes().to_vec()),
+        _ => (404, "application/json", br#"{"error":"not found"}"#.to_vec()),
+    }
+}
 
-  <section class="card full"><h2>Last 60 seconds</h2><canvas id="chart" width="600" height="120"></canvas></section>
+fn with_cidr<F>(req: &ParsedReq, f: F) -> (u16, &'static str, Vec<u8>)
+where F: FnOnce(&str) -> anyhow::Result<()>,
+{
+    let cidr = match req.query.get("cidr") { Some(c) => c.as_str(), None => return bad_request("missing cidr") };
+    match f(cidr) {
+        Ok(()) => (204, "text/plain", vec![]),
+        Err(e) => bad_request(&format!("{e}")),
+    }
+}
 
-  <section class="card"><h2>Top IPs</h2><div id="top_ips"></div></section>
-  <section class="card"><h2>Top paths</h2><div id="top_paths"></div></section>
-  <section class="card"><h2>Top rules</h2><div id="top_rules"></div></section>
-  <section class="card"><h2>Top countries</h2><div id="top_countries"></div></section>
-  <section class="card full"><h2>Currently banned</h2><div id="banned"></div></section>
-</main>
-<div class="footer">2t1-Waf · admin · refresh 2s</div>
-<script>
-const $ = id => document.getElementById(id);
-function rows(el, items){
-  el.innerHTML = items.length ? items.map(([k,v]) =>
-    `<div class="row"><span>${escapeHtml(k)}</span><span class="v">${v}</span></div>`
-  ).join("") : '<div class="row"><span class="v">no data</span></div>';
+fn ok_json(body: Vec<u8>) -> (u16, &'static str, Vec<u8>) { (200, "application/json", body) }
+fn bad_request(msg: &str) -> (u16, &'static str, Vec<u8>) {
+    (400, "application/json",
+     serde_json::to_vec(&serde_json::json!({"error": msg})).unwrap_or_default())
 }
-function escapeHtml(s){return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-function drawChart(buckets){
-  const c = $("chart"), ctx = c.getContext("2d");
-  const dpr = window.devicePixelRatio || 1;
-  const w = c.clientWidth, h = c.clientHeight;
-  c.width = w*dpr; c.height = h*dpr; ctx.scale(dpr,dpr);
-  ctx.clearRect(0,0,w,h);
-  const max = Math.max(1, ...buckets.flatMap(b => [b.allowed,b.challenged,b.blocked]));
-  const bw = w / buckets.length;
-  buckets.forEach((b,i)=>{
-    const x = i*bw, all = b.allowed+b.challenged+b.blocked;
-    const ya = h - (b.allowed/max)*h;
-    const yc = ya - (b.challenged/max)*h;
-    const yb = yc - (b.blocked/max)*h;
-    ctx.fillStyle = "#3ddc97"; ctx.fillRect(x, ya, Math.max(1,bw-1), h-ya);
-    ctx.fillStyle = "#f7b500"; ctx.fillRect(x, yc, Math.max(1,bw-1), ya-yc);
-    ctx.fillStyle = "#ff5470"; ctx.fillRect(x, yb, Math.max(1,bw-1), yc-yb);
-  });
+
+async fn write_response(s: &mut TcpStream, status: u16, ctype: &str, body: &[u8]) -> std::io::Result<()> {
+    let head = format!(
+        "HTTP/1.1 {status} {reason}\r\n\
+         content-type: {ctype}\r\n\
+         content-length: {len}\r\n\
+         cache-control: no-store\r\n\
+         x-content-type-options: nosniff\r\n\
+         connection: close\r\n\r\n",
+        status = status, reason = reason(status), ctype = ctype, len = body.len(),
+    );
+    s.write_all(head.as_bytes()).await?;
+    s.write_all(body).await?;
+    Ok(())
 }
-async function tick(){
-  try {
-    const [m, b] = await Promise.all([
-      fetch("/api/metrics").then(r=>r.json()),
-      fetch("/api/banned").then(r=>r.json()),
-    ]);
-    $("allowed").textContent = m.allowed;
-    $("challenged").textContent = m.challenged;
-    $("blocked").textContent = m.blocked;
-    $("rate_limited").textContent = m.rate_limited;
-    rows($("top_ips"), m.top_ips);
-    rows($("top_paths"), m.top_paths);
-    rows($("top_rules"), m.top_rules);
-    rows($("top_countries"), m.top_countries);
-    rows($("banned"), b.map(x => [x.ip, x.expires_in + "s"]));
-    drawChart(m.ring);
-    $("upd").textContent = new Date().toLocaleTimeString();
-  } catch (e) { /* keep polling */ }
+
+fn reason(code: u16) -> &'static str {
+    match code {
+        200 => "OK", 201 => "Created", 204 => "No Content",
+        301 => "Moved Permanently",
+        400 => "Bad Request", 401 => "Unauthorized", 403 => "Forbidden",
+        404 => "Not Found", 405 => "Method Not Allowed",
+        500 => "Internal Server Error",
+        _ => "OK",
+    }
 }
-tick(); setInterval(tick, 2000);
-</script>
-</body></html>"##;
+
+/// Server-Sent Events stream of new dashboard data. Writes one JSON snapshot
+/// per second. The connection is kept open until the client disconnects.
+async fn stream_events(mut s: TcpStream, engine: Arc<Engine>) -> std::io::Result<()> {
+    let head = "HTTP/1.1 200 OK\r\n\
+                content-type: text/event-stream\r\n\
+                cache-control: no-store\r\n\
+                connection: keep-alive\r\n\
+                x-accel-buffering: no\r\n\r\n";
+    s.write_all(head.as_bytes()).await?;
+
+    let mut last_event_ts: u64 = 0;
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+    loop {
+        interval.tick().await;
+        let snap = engine.metrics.snapshot();
+        let evs = engine.events.since(last_event_ts, 200);
+        if let Some(last) = evs.last() { last_event_ts = last.ts_ms; }
+        let payload = serde_json::json!({
+            "metrics": snap,
+            "runtime": engine.runtime.snapshot(),
+            "in_flight_total": engine.conns.total(),
+            "events": evs,
+            "ts_ms": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64).unwrap_or(0),
+        });
+        let line = format!("data: {}\n\n", serde_json::to_string(&payload).unwrap_or_default());
+        if s.write_all(line.as_bytes()).await.is_err() { return Ok(()); }
+        // Heartbeat is implicit because we always send something each second.
+    }
+}

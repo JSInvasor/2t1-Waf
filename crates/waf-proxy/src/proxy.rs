@@ -31,6 +31,8 @@ pub struct WafCtx {
     pub handled_locally: bool,
     pub request_id: String,
     pub client_ip: String,
+    /// IP that was tracked in the conn-tracker so `logging` decrements it.
+    pub tracked_ip: Option<IpAddr>,
 }
 
 #[async_trait]
@@ -42,6 +44,8 @@ impl ProxyHttp for WafProxy {
         let req = build_request_ctx(session, &self.engine);
         ctx.request_id = req.request_id.clone();
         ctx.client_ip = req.client_ip.to_string();
+        ctx.tracked_ip = Some(req.client_ip);
+        self.engine.conns.inc(req.client_ip);
 
         // Reserved internal endpoints.
         if req.path == "/__2t1/verify" && req.method.eq_ignore_ascii_case("POST") {
@@ -122,6 +126,7 @@ impl ProxyHttp for WafProxy {
     }
 
     async fn logging(&self, _session: &mut Session, e: Option<&pingora_core::Error>, ctx: &mut Self::CTX) {
+        if let Some(ip) = ctx.tracked_ip { self.engine.conns.dec(ip); }
         if let Some(err) = e {
             self.engine.metrics.upstream_errors.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             tracing::warn!(request_id = %ctx.request_id, ip = %ctx.client_ip, err = %err, "request failed");

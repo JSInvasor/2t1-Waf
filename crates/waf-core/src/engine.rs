@@ -5,13 +5,17 @@
 
 use crate::challenge::Challenger;
 use crate::config::Config;
+use crate::connections::ConnTracker;
 use crate::decision::{Decision, DecisionReason};
+use crate::events::EventLog;
 use crate::metrics::Metrics;
 use crate::ratelimit::RateLimiter;
 use crate::reputation::{Reputation, Reputations};
 use crate::request::RequestCtx;
 use crate::rules::{self, Surface};
+use crate::runtime::Runtime;
 use crate::score::*;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 pub struct Engine {
@@ -21,6 +25,9 @@ pub struct Engine {
     pub challenger: Challenger,
     pub ua_scanner: rules::ua::UaScanner,
     pub metrics: Arc<Metrics>,
+    pub runtime: Arc<Runtime>,
+    pub events: Arc<EventLog>,
+    pub conns: Arc<ConnTracker>,
 }
 
 impl Engine {
@@ -34,6 +41,7 @@ impl Engine {
             cfg.challenge.cookie_ttl_secs,
             cfg.challenge.pow_difficulty,
         );
+        let runtime = Arc::new(Runtime::from_config(&cfg));
         Ok(Arc::new(Self {
             cfg: Arc::new(cfg),
             rate_limiter,
@@ -41,63 +49,114 @@ impl Engine {
             challenger,
             ua_scanner,
             metrics: Arc::new(Metrics::default()),
+            runtime,
+            events: Arc::new(EventLog::default()),
+            conns: Arc::new(ConnTracker::default()),
         }))
     }
 
     pub fn evaluate(&self, ctx: &RequestCtx) -> Decision {
         let req_id = ctx.request_id.clone();
 
-        // 1. A valid clearance cookie short-circuits everything but the IP
-        //    deny / rate limit checks (still cheap).
+        // 1. Clearance cookie short-circuits everything except the always-on
+        //    deny-list / connection-cap / rate-limit checks.
         let cleared = ctx.cookie(self.challenger.cookie_name())
             .map(|v| self.challenger.verify_clearance(v))
             .unwrap_or(false);
 
-        // 2. IP reputation.
-        match self.reputations.classify(ctx.client_ip) {
-            Reputation::Allow => {
-                return Decision::allow(req_id);
-            }
+        // 2. Static + runtime IP reputation. Allow always wins.
+        let ip = ctx.client_ip;
+        let runtime_allow = self.runtime.allow.read();
+        if runtime_allow.iter().any(|n| n.contains(&ip)) {
+            drop(runtime_allow);
+            return self.finalize(ctx, Decision::allow(req_id));
+        }
+        drop(runtime_allow);
+
+        match self.reputations.classify(ip) {
+            Reputation::Allow => return self.finalize(ctx, Decision::allow(req_id)),
             Reputation::Deny => {
                 let r = DecisionReason {
                     rule_id: "REP-DENY", category: "reputation",
                     score: SCORE_DENY_REPUTATION,
                     detail: "ip on deny list or auto-banned".into(),
                 };
-                self.metrics.blocked.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                return Decision::block(req_id, 403, r);
+                self.metrics.blocked.fetch_add(1, Ordering::Relaxed);
+                return self.finalize(ctx, Decision::block(req_id, 403, r));
             }
             Reputation::Unknown => {}
         }
-
-        // 3. Hard limits — these are absolute, no scoring.
-        if let Some(d) = self.hard_limits(&req_id, ctx) { return d; }
-
-        // 4. Rate limit.
-        if let Err(l) = self.rate_limiter.check(&ctx.client_ip.to_string(), &ctx.path) {
+        if self.runtime.deny.read().iter().any(|n| n.contains(&ip)) {
             let r = DecisionReason {
-                rule_id: "RL-01", category: "rate_limit",
-                score: SCORE_RL_HIT,
-                detail: format!("scope={} retry_after={}s path={}", l.scope, l.retry_after, l.path),
+                rule_id: "REP-DENY-RT", category: "reputation",
+                score: SCORE_DENY_REPUTATION,
+                detail: "ip on runtime deny list".into(),
             };
-            self.metrics.rate_limited.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            self.metrics.blocked.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            return Decision::block(req_id, 429, r);
+            self.metrics.blocked.fetch_add(1, Ordering::Relaxed);
+            return self.finalize(ctx, Decision::block(req_id, 403, r));
+        }
+
+        // 3. Per-IP concurrent request cap.
+        let in_flight = self.conns.current(ip);
+        let cap = self.runtime.max_concurrent_per_ip.load(Ordering::Relaxed) as i64;
+        if cap > 0 && in_flight > cap {
+            let r = DecisionReason {
+                rule_id: "CONN-CAP", category: "ddos",
+                score: SCORE_DENY_REPUTATION,
+                detail: format!("{} concurrent > cap {}", in_flight, cap),
+            };
+            self.metrics.blocked.fetch_add(1, Ordering::Relaxed);
+            return self.finalize(ctx, Decision::block(req_id, 429, r));
+        }
+
+        // 4. Hard absolute limits.
+        if let Some(d) = self.hard_limits(&req_id, ctx) {
+            return self.finalize(ctx, d);
+        }
+
+        // 5. Rate limit (with adaptive scaling under attack).
+        let under_attack = self.runtime.under_attack.load(Ordering::Relaxed);
+        if self.runtime.rules.rate_limit.load(Ordering::Relaxed) {
+            let scale_bps = if under_attack {
+                self.runtime.rpm_under_attack_bps.load(Ordering::Relaxed)
+            } else { 10_000 };
+            if let Err(l) = self.rate_limiter.check_scaled(&ctx.client_ip.to_string(), &ctx.path, scale_bps) {
+                let r = DecisionReason {
+                    rule_id: "RL-01", category: "rate_limit",
+                    score: SCORE_RL_HIT,
+                    detail: format!("scope={} retry_after={}s path={}", l.scope, l.retry_after, l.path),
+                };
+                self.metrics.rate_limited.fetch_add(1, Ordering::Relaxed);
+                self.metrics.blocked.fetch_add(1, Ordering::Relaxed);
+                return self.finalize(ctx, Decision::block(req_id, 429, r));
+            }
         }
 
         if cleared {
-            // Trusted browser — skip the heavyweight scanning.
-            return Decision::allow(req_id);
+            return self.finalize(ctx, Decision::allow(req_id));
         }
 
-        // 5. Scoring signals. Run cheap header checks first, then the regex
-        //    surface scans.
+        // 6. "Under attack" forces every fresh visitor through the challenge.
+        if under_attack {
+            self.metrics.challenged.fetch_add(1, Ordering::Relaxed);
+            let r = DecisionReason {
+                rule_id: "UA-MODE", category: "anti_ddos",
+                score: 100,
+                detail: "under attack mode forcing challenge".into(),
+            };
+            return self.finalize(ctx, Decision::challenge(req_id, 100, vec![r]));
+        }
+
+        // 7. Scoring signals.
         let mut decision = Decision::allow(req_id.clone());
 
         if let Some(r) = self.geoip_reason(ctx) { decision.add_reason(r); }
-        for r in self.header_reasons(ctx) { decision.add_reason(r); }
+        for r in self.header_reasons(ctx)      { decision.add_reason(r); }
 
-        if !ctx.user_agent.is_empty() && self.ua_scanner.is_suspicious(&ctx.user_agent) {
+        if self.runtime.rules.bot_ua.load(Ordering::Relaxed)
+            && !ctx.user_agent.is_empty()
+            && self.ua_scanner.is_suspicious(&ctx.user_agent)
+        {
             decision.add_reason(DecisionReason {
                 rule_id: "UA-SUSPICIOUS", category: "ua",
                 score: SCORE_BAD_UA,
@@ -105,39 +164,37 @@ impl Engine {
             });
         }
 
-        // Detection rules over the request surface.
         let surface = Surface::from(ctx);
-        if self.cfg.detection.sqli {
+        if self.runtime.rules.sqli.load(Ordering::Relaxed) {
             if let Some(h) = rules::sqli::scan(&surface) {
                 decision.add_reason(hit_to_reason(h, SCORE_SQLI_HIGH));
             }
         }
-        if self.cfg.detection.xss {
+        if self.runtime.rules.xss.load(Ordering::Relaxed) {
             if let Some(h) = rules::xss::scan(&surface) {
                 decision.add_reason(hit_to_reason(h, SCORE_XSS_HIGH));
             }
         }
-        if self.cfg.detection.traversal {
+        if self.runtime.rules.traversal.load(Ordering::Relaxed) {
             if let Some(h) = rules::traversal::scan(&surface) {
                 decision.add_reason(hit_to_reason(h, SCORE_TRAVERSAL));
             }
         }
-        if self.cfg.detection.cmdi {
+        if self.runtime.rules.cmdi.load(Ordering::Relaxed) {
             if let Some(h) = rules::cmdi::scan(&surface) {
                 decision.add_reason(hit_to_reason(h, SCORE_CMDI));
             }
         }
-        if self.cfg.detection.lfi {
+        if self.runtime.rules.lfi.load(Ordering::Relaxed) {
             if let Some(h) = rules::lfi::scan(&surface) {
                 decision.add_reason(hit_to_reason(h, SCORE_LFI));
             }
         }
 
-        // 6. Threshold decision.
-        let block_t = self.cfg.detection.block_threshold;
-        let chal_t  = self.cfg.detection.challenge_threshold;
+        // 8. Threshold decision.
+        let block_t = self.runtime.block_threshold.load(Ordering::Relaxed);
+        let chal_t  = self.runtime.challenge_threshold.load(Ordering::Relaxed);
         if decision.score >= block_t {
-            // Promote to block + register an offence (auto-ban).
             let primary = decision.reasons.first().cloned().unwrap_or(DecisionReason {
                 rule_id: "ANOMALY", category: "anomaly",
                 score: decision.score, detail: "score over threshold".into(),
@@ -148,16 +205,21 @@ impl Engine {
                 score = decision.score, banned = new_ban,
                 "blocked by score threshold"
             );
-            self.metrics.blocked.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            return Decision::block(req_id, 403, primary);
+            self.metrics.blocked.fetch_add(1, Ordering::Relaxed);
+            return self.finalize(ctx, Decision::block(req_id, 403, primary));
         }
         if decision.score >= chal_t {
-            self.metrics.challenged.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            return Decision::challenge(req_id, decision.score, decision.reasons);
+            self.metrics.challenged.fetch_add(1, Ordering::Relaxed);
+            return self.finalize(ctx, Decision::challenge(req_id, decision.score, decision.reasons));
         }
 
-        self.metrics.allowed.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        Decision::allow(req_id)
+        self.metrics.allowed.fetch_add(1, Ordering::Relaxed);
+        self.finalize(ctx, Decision::allow(req_id))
+    }
+
+    fn finalize(&self, ctx: &RequestCtx, d: Decision) -> Decision {
+        self.events.record(ctx, &d);
+        d
     }
 
     fn hard_limits(&self, req_id: &str, ctx: &RequestCtx) -> Option<Decision> {
@@ -235,7 +297,6 @@ impl Engine {
                 detail: format!("only {} headers present", ctx.headers.len()),
             });
         }
-        // Smuggling-style header-pair anomalies.
         let has_cl = ctx.headers.contains_key("content-length");
         let has_te = ctx.headers.get("transfer-encoding")
             .map(|v| v.to_ascii_lowercase().contains("chunked"))
@@ -253,7 +314,10 @@ impl Engine {
     fn geoip_reason(&self, ctx: &RequestCtx) -> Option<DecisionReason> {
         let country = ctx.country.as_deref()?;
         let cc = country.to_ascii_uppercase();
-        if self.cfg.geoip.block_countries.iter().any(|c| c.eq_ignore_ascii_case(&cc)) {
+        let runtime_blocked = self.runtime.blocked_countries.read();
+        if runtime_blocked.iter().any(|c| c.eq_ignore_ascii_case(&cc))
+            || self.cfg.geoip.block_countries.iter().any(|c| c.eq_ignore_ascii_case(&cc))
+        {
             return Some(DecisionReason {
                 rule_id: "GEO-BLOCKED", category: "geoip",
                 score: SCORE_GEO_BLOCKED,
@@ -342,5 +406,29 @@ hmac_secret = "a-very-secret-key-of-some-length"
         let e = Engine::build(cfg()).unwrap();
         let d = e.evaluate(&req("/x?id=1' OR 1=1--", "id=1' OR 1=1--"));
         assert_eq!(d.action, Action::Block);
+    }
+
+    #[test]
+    fn under_attack_forces_challenge() {
+        let e = Engine::build(cfg()).unwrap();
+        e.runtime.under_attack.store(true, Ordering::Relaxed);
+        let d = e.evaluate(&req("/x", ""));
+        assert_eq!(d.action, Action::Challenge);
+    }
+
+    #[test]
+    fn runtime_deny_blocks() {
+        let e = Engine::build(cfg()).unwrap();
+        e.runtime.add_deny("1.2.3.4").unwrap();
+        let d = e.evaluate(&req("/x", ""));
+        assert_eq!(d.action, Action::Block);
+    }
+
+    #[test]
+    fn runtime_allow_overrides_rule() {
+        let e = Engine::build(cfg()).unwrap();
+        e.runtime.add_allow("1.2.3.4").unwrap();
+        let d = e.evaluate(&req("/x?id=1' OR 1=1--", "id=1' OR 1=1--"));
+        assert_eq!(d.action, Action::Allow);
     }
 }

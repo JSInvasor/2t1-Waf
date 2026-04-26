@@ -24,3 +24,4 @@ anyhow = { workspace = true }
 bytes = { workspace = true }
 http = { workspace = true }
 once_cell = { workspace = true }
+percent-encoding = { workspace = true }

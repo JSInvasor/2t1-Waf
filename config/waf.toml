@@ -2,8 +2,16 @@
 # Reload with SIGHUP
 
 [server]
-# Address the WAF listens on (clients connect here).
+# Address the WAF listens on for plain HTTP. Set "" to disable plain HTTP.
 listen = "0.0.0.0:8080"
+# TLS listener for HTTPS. Leave "" to disable.
+listen_tls = ""
+# PEM cert chain + private key for the TLS listener.
+tls_cert = ""
+tls_key  = ""
+# When > 0 and listen_tls is enabled, the plain HTTP listener will 301-redirect
+# to https on this port (set to 443 in production).
+redirect_to_https_port = 0
 # Number of Pingora worker threads. 0 = number of CPU cores.
 threads = 0
 # Trust X-Forwarded-For from this many hops (0 = use socket peer).
@@ -18,79 +26,67 @@ connect_timeout_ms = 2000
 read_timeout_ms = 30000
 
 [limits]
-# Maximum request body size in bytes (1 MiB default).
 max_body_bytes = 1048576
-# Maximum number of headers in a request.
 max_headers = 100
-# Maximum length of any single header value.
 max_header_value_bytes = 8192
-# Maximum URI length.
 max_uri_bytes = 8192
-# Allowed HTTP methods.
 allowed_methods = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
 
 [rate_limit]
-# Sliding-window rate limit per client IP.
 enabled = true
 requests_per_minute = 600
 burst = 60
-# Per-path stricter rate limits (regex on path).
 [[rate_limit.routes]]
-pattern = "^/(login|signin|auth|register)"
+pattern = "^/(login|signin|auth|register|api/auth)"
 requests_per_minute = 20
 burst = 5
 
 [reputation]
-# Static allow / deny CIDRs. Allow always wins.
 allow_cidrs = []
 deny_cidrs = []
-# Auto-ban an IP that scores >= ban_threshold this many times within window_secs.
 auto_ban_threshold_hits = 5
 auto_ban_window_secs = 60
 auto_ban_duration_secs = 3600
 
 [geoip]
-# Optional MaxMind GeoLite2-Country.mmdb path. Leave empty to disable.
 mmdb_path = ""
-# ISO country codes to block outright.
 block_countries = []
-# Countries to apply extra scrutiny (added bot score).
 suspicious_countries = []
 
 [detection]
-# Bot/anomaly scoring. Total score >= challenge_threshold triggers JS challenge,
-# >= block_threshold triggers a hard block. 0..100.
 challenge_threshold = 40
 block_threshold = 70
-# Toggle individual rule families.
 sqli   = true
 xss    = true
 traversal = true
 cmdi   = true
 lfi    = true
-# Suspicious User-Agent substrings (case-insensitive).
 suspicious_user_agents = [
     "sqlmap", "nikto", "acunetix", "nessus", "nmap", "masscan", "zgrab",
     "fuzz", "wpscan", "dirbuster", "gobuster", "feroxbuster", "ffuf",
     "havij", "burpcollaborator", "qualys", "openvas", "metasploit",
+    "wfuzz", "arachni", "skipfish", "w3af", "vega", "appscan", "netsparker",
+    "rapid7", "shodan", "censys", "zaproxy", "owasp zap", "paros",
+    "python-requests", "go-http-client", "okhttp", "libwww-perl", "lwp::",
+    "curl/7.0", "curl/7.1", "curl/7.2", "wget/1.0", "java/1.4", "ruby",
+    "scrapy", "httrack", "httpie", "phantomjs", "headlesschrome",
+    "siege", "ab/", "wrk/", "vegeta", "gatling", "locust", "hey/",
+    "morfeus", "censysinspect", "expanseinc", "leakix", "internetmeasurement",
+    "muhstik", "mirai", "kinsing", "moobot", "mozi", "gafgyt",
 ]
 
 [challenge]
-# HMAC key for signed cookies. CHANGE THIS in production. 32+ random bytes.
 hmac_secret = "change-me-to-a-long-random-secret-please-change-me"
-# Cookie name set after a successful challenge.
 cookie_name = "__2t1_clearance"
-# Lifetime in seconds.
 cookie_ttl_secs = 1800
-# Required proof-of-work difficulty (number of leading zero hex chars).
 pow_difficulty = 4
 
 [logging]
-# json | text
 format = "json"
-# trace | debug | info | warn | error
 level = "info"
 
 [admin]
-# Local admin API for the dashboard. Bind to localhost.
 listen = "127.0.0.1:9090"
+# When set, runtime overrides written from the dashboard are persisted here.
+# Leave "" to disable persistence.
+runtime_state_path = "config/runtime.json"
