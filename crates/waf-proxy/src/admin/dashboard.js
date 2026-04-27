@@ -1,51 +1,40 @@
-// 2t1-Waf dashboard. No build step, no framework — vanilla JS, single file.
+// 2t1-Waf · console — vanilla JS, no build step.
 
-const $  = (s, root = document) => root.querySelector(s);
-const $$ = (s, root = document) => Array.from(root.querySelectorAll(s));
+const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 
 const TOKEN_KEY = "2t1_token";
 let token = localStorage.getItem(TOKEN_KEY) || "";
-let lastEventTs = 0;
 
-const RULE_KEYS = ["sqli","xss","traversal","cmdi","lfi","bot_ua","rate_limit"];
-const RULE_LABELS = {
-  sqli: "SQL injection",
-  xss: "XSS",
-  traversal: "Path traversal",
-  cmdi: "Command injection",
-  lfi: "Local/Remote file inclusion",
-  bot_ua: "Bot user-agents",
-  rate_limit: "Rate limiting",
-};
+const RULES = [
+  ["sqli",       "SQL injection"],
+  ["xss",        "XSS"],
+  ["traversal",  "Path traversal"],
+  ["cmdi",       "Command injection"],
+  ["lfi",        "Local / remote file inclusion"],
+  ["bot_ua",     "Bot user-agents"],
+  ["rate_limit", "Rate limiting"],
+];
 
 // ============== auth ==============
-
 async function api(path, opts = {}) {
   const headers = Object.assign({}, opts.headers || {});
   if (token) headers["authorization"] = "Bearer " + token;
   if (opts.body && !headers["content-type"]) headers["content-type"] = "application/json";
   const r = await fetch(path, Object.assign({}, opts, { headers }));
   if (r.status === 401) {
-    localStorage.removeItem(TOKEN_KEY);
-    token = "";
+    localStorage.removeItem(TOKEN_KEY); token = "";
     showAuth();
     throw new Error("unauthorized");
   }
   return r;
 }
-
 async function checkToken(t) {
   const r = await fetch("/api/state", { headers: { authorization: "Bearer " + t } });
   return r.ok;
 }
-
-function showAuth() {
-  $("#auth-modal").classList.remove("hidden");
-  setTimeout(() => $("#token-input").focus(), 50);
-}
-function hideAuth() {
-  $("#auth-modal").classList.add("hidden");
-}
+function showAuth() { $("#auth-modal").classList.remove("hidden"); setTimeout(() => $("#token-input").focus(), 50); }
+function hideAuth() { $("#auth-modal").classList.add("hidden"); }
 
 $("#token-submit").addEventListener("click", async () => {
   const v = $("#token-input").value.trim();
@@ -60,29 +49,42 @@ $("#token-submit").addEventListener("click", async () => {
     $("#token-error").classList.remove("hidden");
   }
 });
-$("#token-input").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") $("#token-submit").click();
+$("#token-input").addEventListener("keydown", e => { if (e.key === "Enter") $("#token-submit").click(); });
+
+$("#logout").addEventListener("click", e => {
+  e.preventDefault();
+  localStorage.removeItem(TOKEN_KEY); token = "";
+  showAuth();
 });
 
 // ============== routing ==============
-
 const routes = ["overview", "firewall", "traffic", "settings"];
-
 function navigate() {
   const hash = location.hash.replace("#/", "") || "overview";
   const route = routes.includes(hash) ? hash : "overview";
-  $$(".sidebar nav a").forEach(a => a.classList.toggle("active", a.dataset.route === route));
+  $$(".nav-item[data-route]").forEach(a => a.classList.toggle("active", a.dataset.route === route));
   $$("section.page").forEach(s => s.classList.toggle("hidden", s.dataset.page !== route));
-  $("#page-title").textContent = route[0].toUpperCase() + route.slice(1);
+  $("#page-path").textContent = "~/waf/" + route;
 }
 window.addEventListener("hashchange", navigate);
 
-// ============== rendering helpers ==============
-
+// ============== helpers ==============
 function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({
-    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-  }[c]));
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function maskToken(t) {
+  if (!t) return "";
+  if (t.length <= 12) return t;
+  return t.slice(0, 6) + "…" + t.slice(-4);
+}
+
+let toastTimer;
+function toast(msg, kind = "ok") {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.className = `toast show ${kind}`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.className = "toast hidden", 2200);
 }
 
 function renderRows(el, items, opts = {}) {
@@ -94,14 +96,13 @@ function renderRows(el, items, opts = {}) {
     `<div class="row">
        <span class="name">${escapeHtml(k)}</span>
        <span class="v">${v}</span>
-       ${opts.removable ? `<button class="x" data-remove="${escapeHtml(k)}">remove</button>` : ""}
+       ${opts.removable ? `<button class="x" data-action="${opts.removable}" data-remove="${escapeHtml(k)}">×</button>` : ''}
      </div>`
   ).join("");
 }
-
-function renderSimpleRows(el, items, suffix = "", removable = null) {
+function renderListRows(el, items, suffix = "", action = null) {
   if (!items || !items.length) {
-    el.innerHTML = '<div class="row"><span class="v">no data</span></div>';
+    el.innerHTML = '<div class="row"><span class="v">empty</span></div>';
     return;
   }
   el.innerHTML = items.map(it => {
@@ -110,49 +111,43 @@ function renderSimpleRows(el, items, suffix = "", removable = null) {
     return `<div class="row">
       <span class="name">${escapeHtml(k)}</span>
       <span class="v">${escapeHtml(v + suffix)}</span>
-      ${removable ? `<button class="x" data-remove="${escapeHtml(k)}" data-action="${removable}">remove</button>` : ""}
+      ${action ? `<button class="x" data-action="${action}" data-remove="${escapeHtml(k)}">×</button>` : ''}
     </div>`;
   }).join("");
 }
 
-let toastTimer;
-function toast(msg, kind = "ok") {
-  const t = $("#toast");
-  t.textContent = msg;
-  t.className = `toast show ${kind}`;
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.className = "toast hidden"; }, 2400);
-}
-
 // ============== chart ==============
-
 function drawRing(buckets) {
   const c = $("#ring-chart");
   if (!c) return;
-  const dpr = window.devicePixelRatio || 1;
-  const w = c.clientWidth, h = c.clientHeight || 160;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = c.clientWidth, h = c.clientHeight || 170;
   c.width = w * dpr; c.height = h * dpr;
-  const ctx = c.getContext("2d");
-  ctx.scale(dpr, dpr);
+  const ctx = c.getContext("2d"); ctx.scale(dpr, dpr);
   ctx.clearRect(0, 0, w, h);
+
+  // grid lines
+  ctx.strokeStyle = "rgba(17,17,17,0.07)"; ctx.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    const y = (h / 4) * i;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+  }
 
   const max = Math.max(1, ...buckets.flatMap(b => [b.allowed, b.challenged, b.blocked]));
   const bw = w / Math.max(buckets.length, 1);
   buckets.forEach((b, i) => {
     const x = i * bw;
-    const all = b.allowed + b.challenged + b.blocked;
-    if (!all) return;
+    if ((b.allowed + b.challenged + b.blocked) === 0) return;
     const ya = h - (b.allowed / max) * h;
     const yc = ya - (b.challenged / max) * h;
     const yb = yc - (b.blocked / max) * h;
-    ctx.fillStyle = "#3ddc97"; ctx.fillRect(x, ya, Math.max(1, bw - 1), h - ya);
-    ctx.fillStyle = "#f7b500"; ctx.fillRect(x, yc, Math.max(1, bw - 1), ya - yc);
-    ctx.fillStyle = "#ff5470"; ctx.fillRect(x, yb, Math.max(1, bw - 1), yc - yb);
+    ctx.fillStyle = "#1f6f3a"; ctx.fillRect(x, ya, Math.max(1, bw - 1), h - ya);
+    ctx.fillStyle = "#b87900"; ctx.fillRect(x, yc, Math.max(1, bw - 1), ya - yc);
+    ctx.fillStyle = "#b3203a"; ctx.fillRect(x, yb, Math.max(1, bw - 1), yc - yb);
   });
 }
 
 // ============== state apply ==============
-
 function apply(data) {
   if (!data) return;
   const m = data.metrics || {};
@@ -164,6 +159,9 @@ function apply(data) {
   $("#kpi-in-flight").textContent     = (data.in_flight_total || 0).toLocaleString();
   $("#kpi-upstream-errors").textContent = (m.upstream_errors || 0).toLocaleString();
   if (data.version) $("#version").textContent = "v" + data.version;
+  $("#inflight-state").textContent = (data.in_flight_total || 0).toLocaleString();
+  $("#ua-state").textContent = rt.under_attack ? "ON" : "off";
+  $("#ua-state").style.color = rt.under_attack ? "var(--bad)" : "";
 
   if (m.ring) drawRing(m.ring);
 
@@ -172,7 +170,7 @@ function apply(data) {
   renderRows($("#top-rules"),     (m.top_rules || []));
   renderRows($("#top-countries"), (m.top_countries || []));
 
-  // firewall page
+  // firewall
   $("#under-attack").checked = !!rt.under_attack;
   $("#threshold-challenge").value = rt.challenge_threshold ?? "";
   $("#threshold-block").value     = rt.block_threshold ?? "";
@@ -180,23 +178,58 @@ function apply(data) {
   $("#ddos-rpm-bps").value        = rt.rpm_under_attack_bps ?? "";
 
   renderRuleToggles(rt.rules || {});
+  renderListRows($("#allow-rows"), rt.allow || [], "", "unallow");
+  renderListRows($("#deny-rows"),  rt.deny  || [], "", "undeny");
+  renderListRows($("#country-rows"), rt.blocked_countries || [], "", "country");
 
-  renderSimpleRows($("#allow-rows"), rt.allow || [], "", "unallow");
-  renderSimpleRows($("#deny-rows"),  rt.deny  || [], "", "undeny");
-  renderSimpleRows($("#country-rows"), rt.blocked_countries || [], "", "country");
-
+  // settings
   $("#runtime-dump").textContent = JSON.stringify(rt, null, 2);
-  $("#auth-token").placeholder = (rt.auth_token || "").slice(0, 8) + "…";
+  $("#auth-token").value = maskToken(rt.auth_token || "");
 
+  // sidebar live state
+  $("#status-dot").classList.add("live"); $("#status-dot").classList.remove("bad");
   $("#conn-state").textContent = "live";
-  $(".pulse").classList.remove("bad");
+
+  // dstat
+  updateDstat(m, data.in_flight_total || 0);
+}
+
+// ============ dstat ============
+let prevTotals = null;
+function pad(n, w) { return String(n).padStart(w); }
+function updateDstat(m, inflight) {
+  const cur = {
+    a: m.allowed || 0,
+    c: m.challenged || 0,
+    b: m.blocked || 0,
+    r: m.rate_limited || 0,
+  };
+  if (!prevTotals) { prevTotals = cur; return; }
+  const dA = Math.max(0, cur.a - prevTotals.a);
+  const dC = Math.max(0, cur.c - prevTotals.c);
+  const dB = Math.max(0, cur.b - prevTotals.b);
+  const dR = Math.max(0, cur.r - prevTotals.r);
+  const total = dA + dC + dB;
+  prevTotals = cur;
+
+  const time = new Date().toTimeString().slice(0,8);
+  const row = `${time}  ${pad(total,7)}  ${pad(dA,7)}  ${pad(dC,6)}  ${pad(dB,7)}  ${pad(dR,7)}  ${pad(inflight,9)}`;
+  let cls = "dstat-line";
+  if (dB > 0) cls += " bad-spike";
+  else if (dC > 0) cls += " warn-spike";
+  else if (total === 0) cls += " idle";
+
+  const body = $("#dstat-body");
+  if (!body) return;
+  body.insertAdjacentHTML("afterbegin", `<span class="${cls}">${row}</span>\n`);
+  while (body.childElementCount > 60) body.removeChild(body.lastElementChild);
 }
 
 function renderRuleToggles(state) {
   const el = $("#rule-toggles");
-  el.innerHTML = RULE_KEYS.map(k => `
+  el.innerHTML = RULES.map(([k, label]) => `
     <label class="tog">
-      <span>${RULE_LABELS[k]}</span>
+      <span>${label}</span>
       <input type="checkbox" data-rule="${k}" ${state[k] ? "checked" : ""}>
       <span class="switch"></span>
     </label>
@@ -205,23 +238,23 @@ function renderRuleToggles(state) {
 
 function renderEvents(events, append = false) {
   const tbody = $("#event-tbody");
-  const filterAllow     = $("#filter-allow").checked;
-  const filterChallenge = $("#filter-challenge").checked;
-  const filterBlock     = $("#filter-block").checked;
-  const filterText      = $("#filter-text").value.toLowerCase();
+  const fA = $("#filter-allow").checked;
+  const fC = $("#filter-challenge").checked;
+  const fB = $("#filter-block").checked;
+  const ft = $("#filter-text").value.toLowerCase();
 
-  const accept = (e) => {
-    if (e.action === "allow"     && !filterAllow)     return false;
-    if (e.action === "challenge" && !filterChallenge) return false;
-    if (e.action === "block"     && !filterBlock)     return false;
-    if (filterText) {
+  const accept = e => {
+    if (e.action === "allow"     && !fA) return false;
+    if (e.action === "challenge" && !fC) return false;
+    if (e.action === "block"     && !fB) return false;
+    if (ft) {
       const hay = (e.ip + " " + e.path + " " + (e.user_agent||"") + " " + (e.rule_id||"")).toLowerCase();
-      if (!hay.includes(filterText)) return false;
+      if (!hay.includes(ft)) return false;
     }
     return true;
   };
 
-  const render = (e) => `<tr>
+  const render = e => `<tr>
     <td>${new Date(e.ts_ms).toLocaleTimeString()}</td>
     <td>${escapeHtml(e.ip)}</td>
     <td>${escapeHtml(e.country || "—")}</td>
@@ -236,7 +269,7 @@ function renderEvents(events, append = false) {
 
   if (append) {
     const html = events.filter(accept).map(render).join("");
-    tbody.insertAdjacentHTML("afterbegin", html);
+    if (html) tbody.insertAdjacentHTML("afterbegin", html);
     while (tbody.children.length > 500) tbody.removeChild(tbody.lastElementChild);
   } else {
     tbody.innerHTML = events.filter(accept).map(render).join("") || `<tr><td colspan="10" class="mut">no events yet</td></tr>`;
@@ -244,42 +277,33 @@ function renderEvents(events, append = false) {
 }
 
 // ============== streaming ==============
-
 let es;
 function connectStream() {
   if (es) es.close();
-  // EventSource can't set headers, so we use ?token=… as a fallback.
   es = new EventSource("/api/stream?token=" + encodeURIComponent(token));
-  es.onmessage = (m) => {
+  es.onmessage = m => {
     try {
       const data = JSON.parse(m.data);
       apply(data);
       if (data.events && data.events.length) {
-        // events arrive oldest-first; render in reverse for new-first prepend.
         renderEvents(data.events.slice().reverse(), true);
-        const last = data.events[data.events.length - 1];
-        if (last) lastEventTs = last.ts_ms;
       }
-    } catch (e) { /* keep going */ }
+    } catch (_) {}
   };
   es.onerror = () => {
+    $("#status-dot").classList.remove("live"); $("#status-dot").classList.add("bad");
     $("#conn-state").textContent = "reconnecting…";
-    $(".pulse").classList.add("bad");
   };
 }
 
 async function reloadEvents() {
   try {
     const r = await api("/api/events?limit=200");
-    if (r.ok) {
-      const evs = await r.json();
-      renderEvents(evs, false);
-    }
-  } catch (e) {}
+    if (r.ok) renderEvents(await r.json(), false);
+  } catch (_) {}
 }
 
 // ============== actions ==============
-
 async function patchRuntime(patch) {
   const r = await api("/api/runtime", { method: "POST", body: JSON.stringify(patch) });
   if (!r.ok) { toast("Failed to update", "bad"); return false; }
@@ -292,19 +316,16 @@ async function refreshState() {
   try {
     const [stateR, bannedR] = await Promise.all([api("/api/state"), api("/api/banned")]);
     if (!stateR.ok || !bannedR.ok) return;
-    const state = await stateR.json();
+    apply(await stateR.json());
     const banned = await bannedR.json();
-    apply(state);
-    renderSimpleRows($("#banned-rows"),
-      banned.map(b => ({ label: b.ip, value: b.expires_in + "s" })),
-      "", "unban");
-  } catch (e) {}
+    renderListRows($("#banned-rows"),
+      banned.map(b => ({ label: b.ip, value: b.expires_in + "s" })), "", "unban");
+  } catch (_) {}
 }
 
-document.addEventListener("change", async (e) => {
+document.addEventListener("change", async e => {
   if (e.target.matches("[data-rule]")) {
-    const k = e.target.dataset.rule;
-    await patchRuntime({ rules: { [k]: e.target.checked } });
+    await patchRuntime({ rules: { [e.target.dataset.rule]: e.target.checked } });
   }
   if (e.target.id === "under-attack") {
     await fetch("/api/under_attack?on=" + e.target.checked, {
@@ -316,7 +337,7 @@ document.addEventListener("change", async (e) => {
   }
 });
 
-document.addEventListener("click", async (e) => {
+document.addEventListener("click", async e => {
   if (e.target.matches('[data-save="thresholds"]')) {
     await patchRuntime({
       challenge_threshold: parseInt($("#threshold-challenge").value, 10),
@@ -330,27 +351,30 @@ document.addEventListener("click", async (e) => {
     });
   }
   if (e.target.id === "allow-add") {
-    const v = $("#allow-cidr").value.trim();
-    if (!v) return;
+    const v = $("#allow-cidr").value.trim(); if (!v) return;
     const r = await api("/api/ip/allow?cidr=" + encodeURIComponent(v), { method: "POST" });
-    if (r.ok) { $("#allow-cidr").value = ""; refreshState(); toast("Added"); } else { toast("Invalid CIDR", "bad"); }
+    if (r.ok) { $("#allow-cidr").value = ""; refreshState(); toast("Added"); }
+    else toast("Invalid CIDR", "bad");
   }
   if (e.target.id === "deny-add") {
-    const v = $("#deny-cidr").value.trim();
-    if (!v) return;
+    const v = $("#deny-cidr").value.trim(); if (!v) return;
     const r = await api("/api/ip/deny?cidr=" + encodeURIComponent(v), { method: "POST" });
-    if (r.ok) { $("#deny-cidr").value = ""; refreshState(); toast("Added"); } else { toast("Invalid CIDR", "bad"); }
+    if (r.ok) { $("#deny-cidr").value = ""; refreshState(); toast("Added"); }
+    else toast("Invalid CIDR", "bad");
   }
   if (e.target.id === "country-save") {
-    const list = $("#country-input").value.split(",").map(s => s.trim()).filter(Boolean);
+    const list = $("#country-input").value.split(",").map(s => s.trim().toUpperCase()).filter(Boolean);
     await patchRuntime({ blocked_countries: list });
     $("#country-input").value = "";
   }
-  if (e.target.id === "auth-save") {
-    const v = $("#auth-token").value.trim();
-    if (v.length < 16) { toast("Token must be ≥16 chars", "bad"); return; }
-    await patchRuntime({ /* token rotation happens via runtime.json directly */ });
-    toast("Edit runtime.json to rotate the token (server restart required for now)", "bad");
+  if (e.target.id === "copy-token") {
+    try {
+      const r = await api("/api/state");
+      const st = await r.json();
+      const tok = (st.runtime || {}).auth_token || "";
+      await navigator.clipboard.writeText(tok);
+      toast("Token copied to clipboard");
+    } catch (_) { toast("Copy failed", "bad"); }
   }
   if (e.target.matches(".x")) {
     const cidr = e.target.dataset.remove;
@@ -360,8 +384,7 @@ document.addEventListener("click", async (e) => {
       if (r.ok) { refreshState(); toast("Removed"); }
     } else if (action === "country") {
       const cur = (((await (await api("/api/state")).json()).runtime || {}).blocked_countries || []);
-      const next = cur.filter(c => c !== cidr);
-      await patchRuntime({ blocked_countries: next });
+      await patchRuntime({ blocked_countries: cur.filter(c => c !== cidr) });
     } else if (action === "unban") {
       const r = await api("/api/unban?ip=" + encodeURIComponent(cidr), { method: "POST" });
       if (r.ok) { refreshState(); toast("Unbanned"); }
@@ -369,16 +392,90 @@ document.addEventListener("click", async (e) => {
   }
 });
 
-$("#filter-allow").addEventListener("change", reloadEvents);
-$("#filter-challenge").addEventListener("change", reloadEvents);
-$("#filter-block").addEventListener("change", reloadEvents);
-$("#filter-text").addEventListener("input", () => {
-  // Debounce-ish — re-render existing tbody rather than refetch.
-  reloadEvents();
-});
+["filter-allow","filter-challenge","filter-block"].forEach(id =>
+  $("#"+id).addEventListener("change", reloadEvents));
+$("#filter-text").addEventListener("input", reloadEvents);
+
+// ============== particles + halo ==============
+(function ambient() {
+  const canvas = document.getElementById("particles");
+  if (!canvas) return;
+  const ctx = canvas.getContext("2d");
+  let W, H, dpr, drift = [], swarm = [];
+  function resize() {
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    W = canvas.clientWidth = window.innerWidth;
+    H = canvas.clientHeight = window.innerHeight;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  function seed() {
+    drift = [];
+    for (let i = 0; i < 60; i++) drift.push({
+      x: Math.random()*W, y: Math.random()*H,
+      vx: (Math.random()-0.5)*0.04, vy: (Math.random()-0.5)*0.04,
+      r: Math.random()*0.9 + 0.3,
+      a: Math.random()*0.3 + 0.08,
+      ph: Math.random()*Math.PI*2
+    });
+    swarm = [];
+    for (let i = 0; i < 80; i++) swarm.push({
+      angle: Math.random()*Math.PI*2,
+      baseRadius: Math.random()*200 + 40,
+      radius: 0,
+      speed: (Math.random()-0.5)*0.03 + (Math.random()>0.5?0.01:-0.01),
+      size: Math.random()*1.4 + 0.5,
+      wob: Math.random()*Math.PI*2
+    });
+  }
+  window.addEventListener("resize", () => { resize(); seed(); });
+  resize(); seed();
+
+  let mx = W/2, my = H/2, hasMouse = false, swarmCx = W/2, swarmCy = H/2, t = 0;
+  window.addEventListener("mousemove", e => { mx = e.clientX; my = e.clientY; hasMouse = true; });
+  window.addEventListener("mouseleave", () => hasMouse = false);
+
+  function tick() {
+    t += 0.016; ctx.clearRect(0, 0, W, H);
+    swarmCx += ((hasMouse ? mx : W/2) - swarmCx) * 0.05;
+    swarmCy += ((hasMouse ? my : H/2) - swarmCy) * 0.05;
+    for (const p of swarm) {
+      p.angle += p.speed;
+      p.radius = p.baseRadius + Math.sin(t*2 + p.wob) * 10;
+      const px = swarmCx + Math.cos(p.angle) * p.radius;
+      const py = swarmCy + Math.sin(p.angle) * p.radius;
+      ctx.beginPath();
+      ctx.fillStyle = `rgba(17,17,17,${hasMouse ? 0.4 : 0.13})`;
+      ctx.arc(px, py, p.size, 0, Math.PI*2); ctx.fill();
+    }
+    for (const p of drift) {
+      p.x += p.vx + Math.sin(t*0.4 + p.ph)*0.03;
+      p.y += p.vy + Math.cos(t*0.4 + p.ph)*0.03;
+      if (p.x < -10) p.x = W+10; if (p.x > W+10) p.x = -10;
+      if (p.y < -10) p.y = H+10; if (p.y > H+10) p.y = -10;
+      ctx.beginPath();
+      ctx.fillStyle = `rgba(17,17,17,${p.a*(0.6 + 0.4*Math.sin(t + p.ph))})`;
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI*2); ctx.fill();
+    }
+    requestAnimationFrame(tick);
+  }
+  tick();
+})();
+
+(function halo() {
+  const halo = document.getElementById("halo");
+  if (!halo) return;
+  let tx = window.innerWidth/2, ty = window.innerHeight/2, x = tx, y = ty;
+  window.addEventListener("mousemove", e => { tx = e.clientX; ty = e.clientY; });
+  function loop() {
+    x += (tx - x) * 0.07; y += (ty - y) * 0.07;
+    halo.style.transform = `translate(${x}px,${y}px) translate(-50%,-50%)`;
+    requestAnimationFrame(loop);
+  }
+  loop();
+})();
 
 // ============== boot ==============
-
 async function boot() {
   navigate();
   if (!token) { showAuth(); return; }
@@ -387,5 +484,4 @@ async function boot() {
   await reloadEvents();
   connectStream();
 }
-
 boot();
