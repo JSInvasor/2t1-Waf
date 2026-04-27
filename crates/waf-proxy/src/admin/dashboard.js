@@ -189,6 +189,40 @@ function apply(data) {
   // sidebar live state
   $("#status-dot").classList.add("live"); $("#status-dot").classList.remove("bad");
   $("#conn-state").textContent = "live";
+
+  // dstat
+  updateDstat(m, data.in_flight_total || 0);
+}
+
+// ============ dstat ============
+let prevTotals = null;
+function pad(n, w) { return String(n).padStart(w); }
+function updateDstat(m, inflight) {
+  const cur = {
+    a: m.allowed || 0,
+    c: m.challenged || 0,
+    b: m.blocked || 0,
+    r: m.rate_limited || 0,
+  };
+  if (!prevTotals) { prevTotals = cur; return; }
+  const dA = Math.max(0, cur.a - prevTotals.a);
+  const dC = Math.max(0, cur.c - prevTotals.c);
+  const dB = Math.max(0, cur.b - prevTotals.b);
+  const dR = Math.max(0, cur.r - prevTotals.r);
+  const total = dA + dC + dB;
+  prevTotals = cur;
+
+  const time = new Date().toTimeString().slice(0,8);
+  const row = `${time}  ${pad(total,7)}  ${pad(dA,7)}  ${pad(dC,6)}  ${pad(dB,7)}  ${pad(dR,7)}  ${pad(inflight,9)}`;
+  let cls = "dstat-line";
+  if (dB > 0) cls += " bad-spike";
+  else if (dC > 0) cls += " warn-spike";
+  else if (total === 0) cls += " idle";
+
+  const body = $("#dstat-body");
+  if (!body) return;
+  body.insertAdjacentHTML("afterbegin", `<span class="${cls}">${row}</span>\n`);
+  while (body.childElementCount > 60) body.removeChild(body.lastElementChild);
 }
 
 function renderRuleToggles(state) {

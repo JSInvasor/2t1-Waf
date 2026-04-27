@@ -124,26 +124,131 @@ impl Challenger {
 r##"<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Verifying your browser…</title>
+<title>Verifying browser</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Outfit:wght@200;300;400&display=swap" rel="stylesheet">
 <style>
-:root {{ color-scheme: dark; }}
-body {{ margin: 0; min-height: 100vh; display: grid; place-items: center;
-  background: #0b0d12; color: #e6e7ea; font: 14px/1.5 system-ui, sans-serif; }}
-.box {{ width: min(420px, 92vw); padding: 32px; background: #11141b;
-  border: 1px solid #1c2030; border-radius: 12px; box-shadow: 0 10px 30px #0007; }}
-h1 {{ margin: 0 0 8px; font-size: 16px; font-weight: 600; }}
-.sub {{ color: #8a8f9c; margin: 0 0 24px; }}
-.bar {{ height: 6px; background: #1c2030; border-radius: 999px; overflow: hidden; }}
-.bar > div {{ height: 100%; width: 0; background: linear-gradient(90deg,#3a86ff,#8338ec);
-  transition: width .15s ease; }}
-.foot {{ margin-top: 18px; font-size: 11px; color: #5a6071; }}
-code {{ font-family: ui-monospace, monospace; color: #8a8f9c; }}
+  :root{{
+    --bg:#f4f3ee; --paper:#fafaf6; --ink:#111111; --ink-soft:#2a2a2a;
+    --muted:#8b8a84; --hair:rgba(17,17,17,.12); --hair-2:rgba(17,17,17,.07);
+  }}
+  *{{box-sizing:border-box}}
+  html,body{{margin:0;padding:0;height:100%}}
+  body{{
+    background:var(--bg); color:var(--ink);
+    font-family:'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+    font-size:13px; line-height:1.55;
+    display:grid; place-items:center;
+    -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+    overflow:hidden;
+  }}
+  body::before{{
+    content:""; position:fixed; inset:0; pointer-events:none;
+    background:
+      radial-gradient(circle at 20% 10%, rgba(17,17,17,.025), transparent 40%),
+      radial-gradient(circle at 80% 80%, rgba(17,17,17,.02), transparent 50%);
+  }}
+  .halo{{
+    position:fixed; top:50%; left:50%;
+    width:560px; height:560px; border-radius:50%;
+    transform:translate(-50%,-50%);
+    background:radial-gradient(circle at center,
+      rgba(17,17,17,.045) 0%, rgba(17,17,17,.018) 35%, transparent 70%);
+    pointer-events:none; z-index:1; mix-blend-mode:multiply;
+  }}
+  .box{{
+    width:min(440px, 92vw);
+    background:var(--paper);
+    border:1px solid var(--hair); border-radius:10px;
+    padding:30px 34px;
+    position:relative; z-index:2;
+    box-shadow:0 10px 30px rgba(17,17,17,.06);
+  }}
+  .tag{{
+    font-family:'Outfit', sans-serif; font-weight:400;
+    font-size:10px; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--muted); margin-bottom:14px;
+    display:flex; align-items:center; gap:8px;
+  }}
+  .tag::before{{
+    content:""; width:6px; height:6px; border-radius:50%;
+    background:var(--ink-soft); display:inline-block;
+  }}
+  .prompt{{
+    font-size:11.5px; color:var(--muted); margin-bottom:6px;
+    font-weight:300;
+  }}
+  h1{{
+    font-family:'Outfit', sans-serif; font-weight:300;
+    font-size:18px; margin:0 0 4px; letter-spacing:.01em;
+    color:var(--ink);
+  }}
+  .caret{{
+    display:inline-block; width:1.5px; height:.95em;
+    background:var(--ink); margin-left:5px;
+    vertical-align:text-bottom; color:transparent;
+    animation:blink 1.1s steps(2) infinite;
+  }}
+  @keyframes blink{{ 50%{{opacity:0}} }}
+  p.sub{{
+    font-family:'Outfit', sans-serif; font-weight:300;
+    color:var(--muted); margin:14px 0 22px; font-size:12.5px;
+    line-height:1.6;
+  }}
+  .progress{{
+    height:2px; background:rgba(17,17,17,.08);
+    border-radius:999px; overflow:hidden;
+    position:relative;
+  }}
+  .progress > div{{
+    height:100%; width:0;
+    background:var(--ink);
+    transition:width .15s ease;
+  }}
+  .meta{{
+    margin-top:8px;
+    font-family:'JetBrains Mono', monospace;
+    font-size:10.5px; color:var(--muted);
+    display:flex; justify-content:space-between; align-items:center;
+    letter-spacing:.02em;
+  }}
+  .meta .nonce{{ font-variant-numeric:tabular-nums; }}
+  .foot{{
+    margin-top:22px; padding-top:14px;
+    border-top:1px dashed var(--hair-2);
+    display:flex; justify-content:space-between; align-items:center;
+    font-family:'Outfit', sans-serif; font-weight:300;
+    font-size:11px; color:var(--muted);
+  }}
+  .foot code{{
+    font-family:'JetBrains Mono', monospace;
+    background:rgba(17,17,17,.04); padding:2px 6px; border-radius:3px;
+    color:var(--ink-soft); font-size:10.5px;
+  }}
+  .brand{{
+    font-family:'Outfit', sans-serif; font-weight:400;
+    font-size:11px; letter-spacing:.05em;
+  }}
+  .brand .sep{{ color:var(--muted); margin:0 4px; }}
 </style></head><body>
+<div class="halo"></div>
 <div class="box">
-  <h1>Checking your connection</h1>
-  <p class="sub">A one-time browser proof is required before you can continue.</p>
-  <div class="bar"><div id="p"></div></div>
-  <p class="foot">Ref <code>{request_id}</code> · 2t1-Waf</p>
+  <div class="tag">2t1-waf · challenge</div>
+  <div class="prompt">$ ./verify --browser</div>
+  <h1>Checking your browser<span class="caret"></span></h1>
+  <p class="sub">A one-time browser proof is required before you continue.<br>This usually takes less than a second.</p>
+
+  <div class="progress"><div id="p"></div></div>
+  <div class="meta">
+    <span id="status">solving proof of work…</span>
+    <span class="nonce" id="nonce">0</span>
+  </div>
+
+  <div class="foot">
+    <span>ref · <code>{request_id}</code></span>
+    <span class="brand"><b>2t1</b><span class="sep">/</span>waf</span>
+  </div>
 </div>
 <script>
 (async () => {{
@@ -151,28 +256,37 @@ code {{ font-family: ui-monospace, monospace; color: #8a8f9c; }}
   const enc = new TextEncoder();
   const target = "0".repeat(D);
   const bar = document.getElementById("p");
+  const nonceLbl = document.getElementById("nonce");
+  const status = document.getElementById("status");
   let nonce = 0;
   const start = performance.now();
   while (true) {{
-    const buf = enc.encode(C + nonce);
-    const dig = await crypto.subtle.digest("SHA-256", buf);
+    const dig = await crypto.subtle.digest("SHA-256", enc.encode(C + nonce));
     const hex = Array.from(new Uint8Array(dig)).map(b => b.toString(16).padStart(2,"0")).join("");
     if (hex.startsWith(target)) break;
     if ((nonce & 0xfff) === 0) {{
       bar.style.width = Math.min(95, (performance.now()-start)/30) + "%";
+      nonceLbl.textContent = nonce.toLocaleString();
       await new Promise(r => setTimeout(r, 0));
     }}
     nonce++;
   }}
   bar.style.width = "100%";
+  nonceLbl.textContent = nonce.toLocaleString();
+  status.textContent = "submitting…";
   const r = await fetch("/__2t1/verify", {{
     method: "POST",
     headers: {{ "content-type": "application/json" }},
     body: JSON.stringify({{ c: C, n: String(nonce), s: S, e: E }}),
     credentials: "same-origin",
   }});
-  if (r.ok) {{ location.reload(); }}
-  else {{ document.querySelector("h1").textContent = "Verification failed."; }}
+  if (r.ok) {{
+    status.textContent = "verified · redirecting…";
+    setTimeout(() => location.reload(), 250);
+  }} else {{
+    document.querySelector("h1").textContent = "Verification failed.";
+    status.textContent = "please refresh and try again";
+  }}
 }})();
 </script>
 </body></html>

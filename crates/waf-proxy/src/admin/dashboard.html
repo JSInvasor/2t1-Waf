@@ -223,6 +223,15 @@
       <div class="h-sub">Streaming request log — last 500 events. Filters apply locally.</div>
     </div>
 
+    <div class="card dstat-card">
+      <div class="card-head">
+        <h3 class="card-title">$ ./dstat --interval 1</h3>
+        <div class="card-meta mut">per-second deltas · last 60s</div>
+      </div>
+      <div class="dstat-cols">time      total    allow    chal    block       rl  in-flight</div>
+      <pre id="dstat-body" class="dstat-body"></pre>
+    </div>
+
     <div class="card">
       <div class="card-head">
         <h3 class="card-title">Events</h3>

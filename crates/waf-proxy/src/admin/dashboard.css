@@ -285,6 +285,39 @@ canvas#ring-chart{ width:100%; height:170px; display:block; }
 }
 .row .x:hover{ color:var(--bad); border-color:var(--bad); }
 
+/* ============ dstat ============ */
+.dstat-card{ padding-bottom:0; }
+.dstat-cols{
+  font-family:'JetBrains Mono', monospace;
+  font-size:10.5px; font-weight:500;
+  color:var(--muted);
+  letter-spacing:0.04em; text-transform:uppercase;
+  padding:8px 14px;
+  border-top:1px solid var(--hair-2);
+  border-bottom:1px solid var(--hair-2);
+  white-space:pre;
+  background:var(--bg-2);
+}
+.dstat-body{
+  font-family:'JetBrains Mono', monospace;
+  font-size:11.5px;
+  margin:0; padding:6px 14px 12px;
+  max-height:320px; overflow-y:auto;
+  white-space:pre;
+  background:var(--paper);
+  border-bottom-left-radius:8px;
+  border-bottom-right-radius:8px;
+  font-variant-numeric:tabular-nums;
+  line-height:1.65;
+}
+.dstat-body::-webkit-scrollbar{ width:6px; }
+.dstat-body::-webkit-scrollbar-thumb{ background:var(--hair); border-radius:3px; }
+.dstat-line{ display:block; color:var(--ink-soft); }
+.dstat-line.idle{ color:var(--muted); opacity:0.6; }
+.dstat-line.warn-spike{ color:var(--warn); }
+.dstat-line.bad-spike{ color:var(--bad); font-weight:500; }
+.dstat-line .t{ color:var(--muted); }
+
 /* ============ table ============ */
 .table-wrap{ overflow-x:auto; max-height:600px; overflow-y:auto; border-top:1px solid var(--hair-2); }
 table.event-table{ width:100%; border-collapse:collapse; font-size:11.5px; }
