@@ -165,6 +165,15 @@ r##"<!doctype html>
     position:relative; z-index:2;
     box-shadow:0 10px 30px rgba(17,17,17,.06);
   }}
+  .logo{{
+    width:64px; height:50px;
+    margin:0 0 14px;
+    display:flex; align-items:center; justify-content:flex-start;
+  }}
+  .logo svg{{
+    width:100%; height:100%;
+    filter:drop-shadow(0 2px 4px rgba(230,59,39,.18));
+  }}
   .tag{{
     font-family:'Outfit', sans-serif; font-weight:400;
     font-size:10px; letter-spacing:.08em; text-transform:uppercase;
@@ -229,12 +238,31 @@ r##"<!doctype html>
   .brand{{
     font-family:'Outfit', sans-serif; font-weight:400;
     font-size:11px; letter-spacing:.05em;
+    display:inline-flex; align-items:center; gap:0;
   }}
-  .brand .sep{{ color:var(--muted); margin:0 4px; }}
+  .brand .sep{{ color:var(--muted); margin:0 2px; }}
+  .brand .dot{{ color:var(--muted); margin:0 8px; }}
+  .brand a{{ color:var(--ink-soft); text-decoration:none; }}
+  .brand a:hover{{ color:var(--ink); }}
 </style></head><body>
 <div class="halo"></div>
 <div class="box">
-  <div class="tag">2t1-waf · challenge</div>
+  <div class="logo">
+    <svg viewBox="0 0 220 170" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path fill="#e63b27" d="M28 70 L42 24 L52 65 L62 18 L72 65 L82 10 L92 65 L102 6 L112 65 L122 6 L132 65 L142 10 L152 65 L162 18 L172 65 L182 24 L196 70 Z"/>
+      <ellipse cx="112" cy="100" rx="82" ry="56" fill="#e63b27"/>
+      <path fill="#e63b27" d="M30 132 Q12 140 18 158 Q36 168 50 150 Q44 138 36 130 Z"/>
+      <path fill="#e63b27" d="M194 132 Q212 140 206 158 Q188 168 174 150 Q180 138 188 130 Z"/>
+      <ellipse cx="86" cy="92" rx="15" ry="18" fill="#fff"/>
+      <ellipse cx="138" cy="92" rx="15" ry="18" fill="#fff"/>
+      <ellipse cx="88" cy="95" rx="7" ry="9" fill="#1a1a1a"/>
+      <ellipse cx="140" cy="95" rx="7" ry="9" fill="#1a1a1a"/>
+      <circle cx="86" cy="91" r="2.4" fill="#fff"/>
+      <circle cx="138" cy="91" r="2.4" fill="#fff"/>
+      <path d="M96 124 Q112 134 128 124" stroke="#1a1a1a" stroke-width="3" fill="none" stroke-linecap="round"/>
+    </svg>
+  </div>
+  <div class="tag">i-waf · challenge</div>
   <div class="prompt">$ ./verify --browser</div>
   <h1>Checking your browser<span class="caret"></span></h1>
   <p class="sub">A one-time browser proof is required before you continue.<br>This usually takes less than a second.</p>
@@ -247,7 +275,7 @@ r##"<!doctype html>
 
   <div class="foot">
     <span>ref · <code>{request_id}</code></span>
-    <span class="brand"><b>2t1</b><span class="sep">/</span>waf</span>
+    <span class="brand"><b>I</b><span class="sep">-</span>Waf<span class="dot">·</span><a href="https://t.me/l7fuck" target="_blank" rel="noopener">@l7fuck</a></span>
   </div>
 </div>
 <script>
