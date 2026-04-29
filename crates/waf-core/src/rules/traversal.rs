@@ -28,8 +28,8 @@ pub fn scan(s: &Surface) -> Option<Hit> {
     ] {
         if PATTERNS.is_match(field) {
             return Some(Hit {
-                rule_id: "TRAV-01",
-                category: "traversal",
+                rule_id: "TRAV-01".to_string(),
+                category: "traversal".to_string(),
                 matched_field: field_name,
                 matched_excerpt: excerpt(field),
             });

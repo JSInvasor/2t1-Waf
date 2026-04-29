@@ -42,6 +42,19 @@ impl ProxyHttp for WafProxy {
     fn new_ctx(&self) -> Self::CTX { WafCtx::default() }
 
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
+        // Crisis valve. If global in-flight is already at the configured
+        // ceiling, drop the connection here without parsing or scoring —
+        // this is the line that keeps the proxy alive under L7 flood and
+        // the upstream from receiving the spillover.
+        if self.engine.at_capacity() {
+            self.engine.metrics.upstream_errors
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            // 503 with a tiny body, connection: close — minimal cost path.
+            write_response(session, 503, "text/plain", b"overloaded\n",
+                &[("connection", "close"), ("retry-after", "5")]).await;
+            return Ok(true);
+        }
+
         let req = build_request_ctx(session, &self.engine);
         ctx.request_id = req.request_id.clone();
         ctx.client_ip = req.client_ip.to_string();
@@ -65,7 +78,7 @@ impl ProxyHttp for WafProxy {
 
         let path = req.path.clone();
         let country = req.country.clone();
-        let primary_rule = decision.reasons.first().map(|r| r.rule_id.to_string());
+        let primary_rule = decision.reasons.first().map(|r| r.rule_id.clone());
         self.engine.metrics.record(
             decision.action,
             &ctx.client_ip, &path,
@@ -88,6 +101,12 @@ impl ProxyHttp for WafProxy {
                 ctx.decision = Some(decision.clone());
                 ctx.handled_locally = true;
                 serve_challenge(session, &self.engine, &decision).await;
+                Ok(true)
+            }
+            Action::Tarpit => {
+                ctx.decision = Some(decision.clone());
+                ctx.handled_locally = true;
+                serve_tarpit(session).await;
                 Ok(true)
             }
         }
@@ -234,10 +253,37 @@ async fn serve_block(session: &mut Session, d: &Decision) {
     let body = serde_json::to_vec(&serde_json::json!({
         "error": "blocked",
         "request_id": d.request_id,
-        "rule": d.reasons.first().map(|r| r.rule_id),
+        "rule": d.reasons.first().map(|r| r.rule_id.clone()),
     })).unwrap_or_else(|_| b"{\"error\":\"blocked\"}".to_vec());
     let extra = if d.status == 429 { vec![("retry-after", "10")] } else { vec![] };
     write_response(session, d.status, "application/json", &body, &extra).await;
+}
+
+/// Hold the attacker's connection open and drip-feed bytes to burn
+/// their socket budget. Total spend per attacker connection: ~120s
+/// blocking only one tokio task slot — much cheaper than the equivalent
+/// nginx worker on the upstream side.
+async fn serve_tarpit(session: &mut Session) {
+    use bytes::Bytes;
+    use tokio::time::{sleep, Duration};
+    let mut resp = match ResponseHeader::build(200, Some(4)) {
+        Ok(r) => r, Err(_) => return,
+    };
+    let _ = resp.insert_header("content-type", "text/plain; charset=utf-8");
+    let _ = resp.insert_header("connection", "close");
+    let _ = resp.insert_header("x-waf", "2t1");
+    if session.write_response_header(Box::new(resp), false).await.is_err() {
+        return;
+    }
+    // Drip 1 byte every 4s for ~30 chunks (~2 minutes).
+    let payload: &[u8] = b"please-wait-please-wait-please\n";
+    for &b in payload.iter() {
+        sleep(Duration::from_millis(4000)).await;
+        if session.write_response_body(Some(Bytes::copy_from_slice(&[b])), false).await.is_err() {
+            return;
+        }
+    }
+    let _ = session.write_response_body(Some(Bytes::new()), true).await;
 }
 
 async fn serve_challenge(session: &mut Session, engine: &Engine, d: &Decision) {

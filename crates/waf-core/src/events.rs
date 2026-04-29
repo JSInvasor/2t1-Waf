@@ -14,7 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_CAP: usize = 500;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct Event {
     pub ts_ms: u64,
     pub request_id: String,

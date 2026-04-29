@@ -95,7 +95,7 @@ pub fn score(ctx: &RequestCtx) -> Vec<DecisionReason> {
 }
 
 fn reason(rule: &'static str, cat: &'static str, score: u32, detail: &str) -> DecisionReason {
-    DecisionReason { rule_id: rule, category: cat, score, detail: detail.to_string() }
+    DecisionReason { rule_id: rule.to_string(), category: cat.to_string(), score, detail: detail.to_string() }
 }
 
 #[cfg(test)]

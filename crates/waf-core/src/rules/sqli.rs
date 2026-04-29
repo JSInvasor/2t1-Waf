@@ -40,8 +40,8 @@ pub fn scan(s: &Surface) -> Option<Hit> {
     ] {
         if PATTERNS.is_match(field) {
             return Some(Hit {
-                rule_id: "SQLI-01",
-                category: "sqli",
+                rule_id: "SQLI-01".to_string(),
+                category: "sqli".to_string(),
                 matched_field: field_name,
                 matched_excerpt: excerpt(field),
             });

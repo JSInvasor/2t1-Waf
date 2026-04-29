@@ -102,7 +102,7 @@ impl BehaviorTracker {
         // Low diversity: ≥ 30 requests, < 3 distinct paths.
         if count >= 30 && unique_paths < 3 {
             out.push(DecisionReason {
-                rule_id: "BHV-LOWDIV", category: "behavior",
+                rule_id: "BHV-LOWDIV".to_string(), category: "behavior".to_string(),
                 score: W_LOW_DIVERSITY,
                 detail: format!("{} requests on {} unique paths in window", count, unique_paths),
             });
@@ -118,7 +118,7 @@ impl BehaviorTracker {
                 let cv = std_dev / mean;
                 if cv < 0.15 && count >= 15 {
                     out.push(DecisionReason {
-                        rule_id: "BHV-REGULAR", category: "behavior",
+                        rule_id: "BHV-REGULAR".to_string(), category: "behavior".to_string(),
                         score: W_REGULAR_INTERVAL,
                         detail: format!("interval cv={:.2} mean={:.0}ms n={}", cv, mean, s.intervals.len()),
                     });
@@ -131,7 +131,7 @@ impl BehaviorTracker {
             let opt = s.methods[5] + s.methods[6];
             if (opt as f32 / count as f32) >= 0.9 {
                 out.push(DecisionReason {
-                    rule_id: "BHV-METHOD-BIAS", category: "behavior",
+                    rule_id: "BHV-METHOD-BIAS".to_string(), category: "behavior".to_string(),
                     score: W_METHOD_FLOOD,
                     detail: format!("{}% OPTIONS+HEAD of {} requests",
                         (opt * 100) / count.max(1), count),
@@ -142,7 +142,7 @@ impl BehaviorTracker {
         // UA churn: same IP, ≥ 3 distinct UAs in the window.
         if s.uas.len() >= 3 {
             out.push(DecisionReason {
-                rule_id: "BHV-UA-CHURN", category: "behavior",
+                rule_id: "BHV-UA-CHURN".to_string(), category: "behavior".to_string(),
                 score: W_UA_CHURN,
                 detail: format!("{} distinct User-Agents from same IP", s.uas.len()),
             });

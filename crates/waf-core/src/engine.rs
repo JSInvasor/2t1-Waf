@@ -8,8 +8,9 @@ use crate::bot_score;
 use crate::challenge::Challenger;
 use crate::config::Config;
 use crate::connections::ConnTracker;
+use crate::datacenter;
 use crate::ddos;
-use crate::decision::{Decision, DecisionReason};
+use crate::decision::{Action, Decision, DecisionReason};
 use crate::events::EventLog;
 use crate::honeypots::Honeypots;
 use crate::metrics::Metrics;
@@ -20,7 +21,9 @@ use crate::rules::{self, Surface};
 use crate::runtime::{Runtime, UamLevel};
 use crate::score::*;
 use crate::signature::{DistributedUa, RequestReplay};
+use crate::storage::Sink;
 use crate::subnet::SubnetTracker;
+use parking_lot::RwLock;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -39,7 +42,12 @@ pub struct Engine {
     pub honeypots: Arc<Honeypots>,
     pub replay:   Arc<RequestReplay>,
     pub dist_ua:  Arc<DistributedUa>,
+    /// Optional persistent event sink. None = in-memory ring only.
+    pub storage_sink: RwLock<Option<Sink>>,
+    pub storage_path: RwLock<Option<std::path::PathBuf>>,
 }
+
+const W_DATACENTER: u32 = 25;
 
 /// Per-UAM level scaling. Returned by `Engine::uam_params`.
 #[derive(Debug, Clone, Copy)]
@@ -83,7 +91,39 @@ impl Engine {
             honeypots: Arc::new(Honeypots::default()),
             replay:   Arc::new(RequestReplay::default()),
             dist_ua:  Arc::new(DistributedUa::default()),
+            storage_sink: RwLock::new(None),
+            storage_path: RwLock::new(None),
         }))
+    }
+
+    /// Bind a persistent event sink. Called by the proxy crate after
+    /// `Storage::open` succeeds. Optional — if no sink is bound, events
+    /// only land in the in-memory ring.
+    pub fn attach_storage(&self, sink: Sink) {
+        *self.storage_sink.write() = Some(sink);
+    }
+
+    /// Path the storage writer is using; the admin layer needs it to
+    /// open short-lived read connections for timeframe queries.
+    pub fn storage_path(&self) -> Option<std::path::PathBuf> {
+        self.storage_path.read().clone()
+    }
+    pub fn set_storage_path(&self, p: std::path::PathBuf) {
+        *self.storage_path.write() = Some(p);
+    }
+
+    /// Convenience for the admin range endpoints.
+    pub fn runtime_state_db_path(&self) -> Option<std::path::PathBuf> {
+        self.storage_path()
+    }
+
+    /// True when the global in-flight count is at or above the hard
+    /// ceiling. The proxy uses this to short-circuit at the door without
+    /// running any of the rule pipeline.
+    pub fn at_capacity(&self) -> bool {
+        let cap = self.runtime.global_inflight_cap.load(Ordering::Relaxed) as i64;
+        if cap == 0 { return false; }
+        self.conns.total() >= cap
     }
 
     /// Translate the runtime UAM level into engine-side scaling parameters.
@@ -130,7 +170,7 @@ impl Engine {
             Reputation::Allow => return self.finalize(ctx, Decision::allow(req_id)),
             Reputation::Deny => {
                 let r = DecisionReason {
-                    rule_id: "REP-DENY", category: "reputation",
+                    rule_id: "REP-DENY".to_string(), category: "reputation".to_string(),
                     score: SCORE_DENY_REPUTATION,
                     detail: "ip on deny list or auto-banned".into(),
                 };
@@ -140,7 +180,7 @@ impl Engine {
         }
         if self.runtime.deny.read().iter().any(|n| n.contains(&ip)) {
             let r = DecisionReason {
-                rule_id: "REP-DENY-RT", category: "reputation",
+                rule_id: "REP-DENY-RT".to_string(), category: "reputation".to_string(),
                 score: SCORE_DENY_REPUTATION,
                 detail: "ip on runtime deny list".into(),
             };
@@ -164,7 +204,7 @@ impl Engine {
         }
         if cap > 0 && in_flight > cap {
             let r = DecisionReason {
-                rule_id: "CONN-CAP", category: "ddos",
+                rule_id: "CONN-CAP".to_string(), category: "ddos".to_string(),
                 score: SCORE_DENY_REPUTATION,
                 detail: format!("{} concurrent > cap {}", in_flight, cap),
             };
@@ -187,7 +227,7 @@ impl Engine {
             } else { 10_000 };
             if let Err(l) = self.rate_limiter.check_scaled(&ctx.client_ip.to_string(), &ctx.path, scale_bps) {
                 let r = DecisionReason {
-                    rule_id: "RL-01", category: "rate_limit",
+                    rule_id: "RL-01".to_string(), category: "rate_limit".to_string(),
                     score: SCORE_RL_HIT,
                     detail: format!("scope={} retry_after={}s path={}", l.scope, l.retry_after, l.path),
                 };
@@ -206,7 +246,7 @@ impl Engine {
         // 6. UAM force-challenge for fresh visitors (Medium and up).
         if uam.force_challenge {
             let r = DecisionReason {
-                rule_id: "UAM-FORCE", category: "anti_ddos",
+                rule_id: "UAM-FORCE".to_string(), category: "anti_ddos".to_string(),
                 score: 100,
                 detail: format!("uam={:?} forcing challenge", self.runtime.uam()),
             };
@@ -236,6 +276,17 @@ impl Engine {
             for r in ddos::score(ctx) { decision.add_reason(r); }
         }
 
+        // Source IP from a known datacenter / cloud ASN range.
+        if self.runtime.datacenter_block.load(Ordering::Relaxed)
+            && datacenter::is_datacenter(ctx.client_ip)
+        {
+            decision.add_reason(DecisionReason {
+                rule_id: "DC-RANGE".to_string(), category: "asn".to_string(),
+                score: W_DATACENTER,
+                detail: "source ip within hosting/cloud CIDR".into(),
+            });
+        }
+
         // Per-subnet rate / concurrent ceiling (catches /24 botnets).
         if self.runtime.defenses.subnet.load(Ordering::Relaxed) {
             let rpm  = self.runtime.subnet_rpm.load(Ordering::Relaxed);
@@ -262,7 +313,7 @@ impl Engine {
             && self.ua_scanner.is_suspicious(&ctx.user_agent)
         {
             decision.add_reason(DecisionReason {
-                rule_id: "UA-SUSPICIOUS", category: "ua",
+                rule_id: "UA-SUSPICIOUS".to_string(), category: "ua".to_string(),
                 score: SCORE_BAD_UA,
                 detail: rules::excerpt(&ctx.user_agent),
             });
@@ -295,14 +346,18 @@ impl Engine {
             }
         }
 
-        // 8. Threshold decision (UAM lowers both thresholds adaptively).
+        // 8. Threshold decision. UAM lowers both thresholds adaptively.
+        // tarpit_t is an absolute "egregious" line above which the
+        // decision is upgraded from block → tarpit so the attacker's
+        // socket gets held open instead of freed.
         let block_t = self.runtime.block_threshold.load(Ordering::Relaxed)
             .saturating_sub(uam.block_drop);
         let chal_t  = self.runtime.challenge_threshold.load(Ordering::Relaxed)
             .saturating_sub(uam.challenge_drop);
+        let tarpit_t = self.runtime.tarpit_score.load(Ordering::Relaxed);
         if decision.score >= block_t {
             let primary = decision.reasons.first().cloned().unwrap_or(DecisionReason {
-                rule_id: "ANOMALY", category: "anomaly",
+                rule_id: "ANOMALY".to_string(), category: "anomaly".to_string(),
                 score: decision.score, detail: "score over threshold".into(),
             });
             let new_ban = self.reputations.record_offence(ctx.client_ip);
@@ -311,6 +366,11 @@ impl Engine {
                 score = decision.score, banned = new_ban,
                 "blocked by score threshold"
             );
+            // Score is egregiously high → tarpit instead of block to
+            // burn the attacker's socket and slow their re-cycle rate.
+            if tarpit_t > 0 && decision.score >= tarpit_t {
+                return self.finalize(ctx, Decision::tarpit(req_id, decision.score, decision.reasons));
+            }
             return self.finalize(ctx, Decision::block(req_id, 403, primary));
         }
         if decision.score >= chal_t {
@@ -322,6 +382,40 @@ impl Engine {
 
     fn finalize(&self, ctx: &RequestCtx, d: Decision) -> Decision {
         self.events.record(ctx, &d);
+        // Mirror to persistent storage if attached. The submit() is
+        // non-blocking; on overload the sink drops with a counter.
+        if let Some(sink) = self.storage_sink.read().as_ref() {
+            // Build an Event the same way EventLog does so the schema matches.
+            let primary = d.reasons.first();
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|x| x.as_millis() as u64).unwrap_or(0);
+            let headers: Vec<(String, String)> = ctx.header_order.iter()
+                .filter_map(|n| ctx.headers.get(n).map(|v| (n.clone(), redact(n, v))))
+                .collect();
+            let ev = crate::events::Event {
+                ts_ms: now_ms,
+                request_id: d.request_id.clone(),
+                ip: ctx.client_ip.to_string(),
+                method: ctx.method.clone(),
+                host: ctx.host.clone(),
+                path: ctx.path.clone(),
+                query: trim(&ctx.query, 192),
+                user_agent: trim(&ctx.user_agent, 192),
+                country: ctx.country.clone(),
+                action: d.action,
+                status: d.status,
+                score: d.score,
+                rule_id: primary.map(|r| r.rule_id.to_string()),
+                category: primary.map(|r| r.category.to_string()),
+                http_version: ctx.http_version.clone(),
+                ja4h: ctx.ja4h.clone(),
+                reasons: d.reasons.clone(),
+                header_order: ctx.header_order.clone(),
+                headers,
+            };
+            sink.submit(ev);
+        }
         d
     }
 
@@ -331,7 +425,7 @@ impl Engine {
             return Some(Decision::block(
                 req_id.to_string(), 405,
                 DecisionReason {
-                    rule_id: "METHOD-DENIED", category: "method",
+                    rule_id: "METHOD-DENIED".to_string(), category: "method".to_string(),
                     score: SCORE_BAD_METHOD,
                     detail: ctx.method.clone(),
                 }));
@@ -340,7 +434,7 @@ impl Engine {
             return Some(Decision::block(
                 req_id.to_string(), 414,
                 DecisionReason {
-                    rule_id: "URI-TOO-LONG", category: "limit",
+                    rule_id: "URI-TOO-LONG".to_string(), category: "limit".to_string(),
                     score: SCORE_OVERSIZE_URI,
                     detail: format!("uri={}B max={}B", ctx.uri.len(), l.max_uri_bytes),
                 }));
@@ -349,7 +443,7 @@ impl Engine {
             return Some(Decision::block(
                 req_id.to_string(), 431,
                 DecisionReason {
-                    rule_id: "TOO-MANY-HEADERS", category: "limit",
+                    rule_id: "TOO-MANY-HEADERS".to_string(), category: "limit".to_string(),
                     score: SCORE_OVERSIZE_HEAD,
                     detail: format!("count={}", ctx.headers.len()),
                 }));
@@ -358,7 +452,7 @@ impl Engine {
             return Some(Decision::block(
                 req_id.to_string(), 431,
                 DecisionReason {
-                    rule_id: "HEADER-TOO-LONG", category: "limit",
+                    rule_id: "HEADER-TOO-LONG".to_string(), category: "limit".to_string(),
                     score: SCORE_OVERSIZE_HEAD,
                     detail: format!("len={}B", too_big.len()),
                 }));
@@ -368,7 +462,7 @@ impl Engine {
                 return Some(Decision::block(
                     req_id.to_string(), 413,
                     DecisionReason {
-                        rule_id: "BODY-TOO-LARGE", category: "limit",
+                        rule_id: "BODY-TOO-LARGE".to_string(), category: "limit".to_string(),
                         score: SCORE_OVERSIZE_BODY,
                         detail: format!("len={}B max={}B", cl, l.max_body_bytes),
                     }));
@@ -381,21 +475,21 @@ impl Engine {
         let mut out = Vec::new();
         if ctx.host.is_empty() {
             out.push(DecisionReason {
-                rule_id: "HDR-NO-HOST", category: "headers",
+                rule_id: "HDR-NO-HOST".to_string(), category: "headers".to_string(),
                 score: SCORE_MISSING_HOST,
                 detail: "Host header missing".into(),
             });
         }
         if ctx.user_agent.is_empty() {
             out.push(DecisionReason {
-                rule_id: "HDR-NO-UA", category: "headers",
+                rule_id: "HDR-NO-UA".to_string(), category: "headers".to_string(),
                 score: SCORE_MISSING_UA,
                 detail: "User-Agent missing".into(),
             });
         }
         if ctx.headers.len() < 3 {
             out.push(DecisionReason {
-                rule_id: "HDR-MINIMAL", category: "headers",
+                rule_id: "HDR-MINIMAL".to_string(), category: "headers".to_string(),
                 score: SCORE_HEADERLESS,
                 detail: format!("only {} headers present", ctx.headers.len()),
             });
@@ -406,7 +500,7 @@ impl Engine {
             .unwrap_or(false);
         if has_cl && has_te {
             out.push(DecisionReason {
-                rule_id: "HDR-CL-TE", category: "smuggling",
+                rule_id: "HDR-CL-TE".to_string(), category: "smuggling".to_string(),
                 score: SCORE_SUSPICIOUS_HEADER,
                 detail: "Content-Length + Transfer-Encoding: chunked".into(),
             });
@@ -422,14 +516,14 @@ impl Engine {
             || self.cfg.geoip.block_countries.iter().any(|c| c.eq_ignore_ascii_case(&cc))
         {
             return Some(DecisionReason {
-                rule_id: "GEO-BLOCKED", category: "geoip",
+                rule_id: "GEO-BLOCKED".to_string(), category: "geoip".to_string(),
                 score: SCORE_GEO_BLOCKED,
                 detail: format!("country={cc}"),
             });
         }
         if self.cfg.geoip.suspicious_countries.iter().any(|c| c.eq_ignore_ascii_case(&cc)) {
             return Some(DecisionReason {
-                rule_id: "GEO-SUSPICIOUS", category: "geoip",
+                rule_id: "GEO-SUSPICIOUS".to_string(), category: "geoip".to_string(),
                 score: SCORE_GEO_SUSPICIOUS,
                 detail: format!("country={cc}"),
             });
@@ -446,6 +540,17 @@ fn hit_to_reason(h: rules::Hit, score: u32) -> DecisionReason {
         detail: format!("field={} excerpt={:?}", h.matched_field, h.matched_excerpt),
     }
 }
+
+/// Same-shape helpers the events module uses, duplicated here so the
+/// storage-sink mirror keeps the schema 1:1 without making them pub.
+fn redact(name: &str, value: &str) -> String {
+    match name {
+        "cookie" | "authorization" | "proxy-authorization"
+        | "x-api-key" | "x-auth-token" => "•••".to_string(),
+        _ => trim(value, 256),
+    }
+}
+fn trim(s: &str, n: usize) -> String { s.chars().take(n).collect() }
 
 #[cfg(test)]
 mod tests {
@@ -540,7 +645,7 @@ hmac_secret = "a-very-secret-key-of-some-length"
         e.runtime.uam_level.store(2, Ordering::Relaxed);
         let d = e.evaluate(&req("/x", ""));
         assert_eq!(d.action, Action::Challenge);
-        assert_eq!(d.reasons.first().map(|r| r.rule_id), Some("UAM-FORCE"));
+        assert_eq!(d.reasons.first().map(|r| r.rule_id.as_str()), Some("UAM-FORCE"));
     }
 
     #[test]

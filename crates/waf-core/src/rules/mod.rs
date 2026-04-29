@@ -14,8 +14,8 @@ use percent_encoding::percent_decode_str;
 
 #[derive(Debug, Clone)]
 pub struct Hit {
-    pub rule_id: &'static str,
-    pub category: &'static str,
+    pub rule_id: String,
+    pub category: String,
     pub matched_field: &'static str,
     pub matched_excerpt: String,
 }

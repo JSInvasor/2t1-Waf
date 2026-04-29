@@ -98,7 +98,7 @@ impl Honeypots {
     pub fn check(&self, path: &str) -> Option<DecisionReason> {
         if self.is_trap(path) {
             Some(DecisionReason {
-                rule_id: "HONEYPOT", category: "honeypot",
+                rule_id: "HONEYPOT".to_string(), category: "honeypot".to_string(),
                 score: W_HONEYPOT,
                 detail: format!("trap path {}", path.chars().take(64).collect::<String>()),
             })

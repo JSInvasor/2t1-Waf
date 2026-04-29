@@ -66,7 +66,7 @@ impl SubnetTracker {
         let mut out = Vec::new();
         if rpm_cap > 0 && count > rpm_cap {
             out.push(DecisionReason {
-                rule_id: "SUBNET-RPM", category: "ddos",
+                rule_id: "SUBNET-RPM".to_string(), category: "ddos".to_string(),
                 score: W_SUBNET_FLOOD,
                 detail: format!("subnet rpm={} cap={}", count, rpm_cap),
             });
@@ -75,7 +75,7 @@ impl SubnetTracker {
             let cur = self.in_flight.get(&key).map(|v| v.load(Ordering::Relaxed)).unwrap_or(0);
             if cur > conn_cap {
                 out.push(DecisionReason {
-                    rule_id: "SUBNET-CONN", category: "ddos",
+                    rule_id: "SUBNET-CONN".to_string(), category: "ddos".to_string(),
                     score: W_SUBNET_CONN,
                     detail: format!("subnet inflight={} cap={}", cur, conn_cap),
                 });

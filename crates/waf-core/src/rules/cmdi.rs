@@ -32,8 +32,8 @@ pub fn scan(s: &Surface) -> Option<Hit> {
     ] {
         if PATTERNS.is_match(field) {
             return Some(Hit {
-                rule_id: "CMDI-01",
-                category: "cmdi",
+                rule_id: "CMDI-01".to_string(),
+                category: "cmdi".to_string(),
                 matched_field: field_name,
                 matched_excerpt: excerpt(field),
             });

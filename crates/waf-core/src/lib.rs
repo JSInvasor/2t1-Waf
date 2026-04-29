@@ -9,6 +9,7 @@ pub mod bot_score;
 pub mod challenge;
 pub mod config;
 pub mod connections;
+pub mod datacenter;
 pub mod ddos;
 pub mod decision;
 pub mod engine;
@@ -23,6 +24,7 @@ pub mod rules;
 pub mod runtime;
 pub mod score;
 pub mod signature;
+pub mod storage;
 pub mod subnet;
 
 pub use config::Config;

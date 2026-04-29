@@ -43,6 +43,48 @@ pub struct AdminService {
     listen: String,
 }
 
+/// Open the SQLite event store and attach its sink to the engine.
+/// Wrapped as a Pingora Service so the open + writer task share the
+/// same tokio runtime as the rest of the admin plumbing. Service exits
+/// immediately after attach — the writer task it spawned keeps running.
+pub fn storage_service(engine: Arc<Engine>, db_path: std::path::PathBuf) -> StorageService {
+    StorageService { engine, db_path }
+}
+
+pub struct StorageService {
+    engine: Arc<Engine>,
+    db_path: std::path::PathBuf,
+}
+
+#[async_trait]
+impl Service for StorageService {
+    async fn start_service(
+        &mut self,
+        #[cfg(unix)] _fds: Option<pingora_core::server::ListenFds>,
+        mut shutdown: ShutdownWatch,
+        _listeners_per_fd: usize,
+    ) {
+        match waf_core::storage::Storage::open(&self.db_path) {
+            Ok(storage) => {
+                tracing::info!(path = %self.db_path.display(), "storage opened");
+                self.engine.set_storage_path(storage.path.clone());
+                self.engine.attach_storage(storage.sink.clone());
+                // Keep `storage` alive — its writer task lives on the
+                // shared tokio runtime, but the Sink/Storage clone here
+                // owns the rusqlite Connection used during queries.
+                let _ = shutdown.changed().await;
+                drop(storage);
+            }
+            Err(e) => {
+                tracing::error!(%e, "failed to open event storage; events will only stay in the in-memory ring");
+                let _ = shutdown.changed().await;
+            }
+        }
+    }
+    fn name(&self) -> &str { "2t1-storage" }
+    fn threads(&self) -> Option<usize> { Some(1) }
+}
+
 /// Background loop that adjusts `runtime.uam_level` based on the per-second
 /// block rate. Activated when `runtime.auto_uam_enabled = true`.
 pub fn auto_uam_service(engine: Arc<Engine>) -> AutoUamService {
@@ -172,6 +214,14 @@ async fn handle(mut s: TcpStream, engine: Arc<Engine>) -> std::io::Result<()> {
             return write_response(&mut s, 401, "application/json", br#"{"error":"unauthorized"}"#).await;
         }
         return stream_events(s, engine).await;
+    } else if (req.path == "/api/events/range" || req.path == "/api/events/series")
+        && req.method == "GET"
+    {
+        if !auth_ok(&req, &engine) {
+            (401, "application/json", br#"{"error":"unauthorized"}"#.to_vec())
+        } else {
+            route_timeframe(&req, &engine).await
+        }
     } else if req.path.starts_with("/api/") {
         if !auth_ok(&req, &engine) {
             (401, "application/json", br#"{"error":"unauthorized"}"#.to_vec())
@@ -232,6 +282,23 @@ async fn read_request(s: &mut TcpStream) -> std::io::Result<Option<ParsedReq>> {
     body.truncate(content_length);
 
     Ok(Some(ParsedReq { method, path, query: parse_query(&query_str), headers, body }))
+}
+
+fn parse_range(q: &HashMap<String, String>, now_ms: u64) -> (u64, u64) {
+    if let (Some(s), Some(u)) = (
+        q.get("since").and_then(|x| x.parse::<u64>().ok()),
+        q.get("until").and_then(|x| x.parse::<u64>().ok()),
+    ) {
+        return (s, u.max(s));
+    }
+    let span_ms: u64 = match q.get("range").map(|s| s.as_str()) {
+        Some("30m") => 30 * 60 * 1000,
+        Some("6h")  => 6 * 3600 * 1000,
+        Some("24h") => 24 * 3600 * 1000,
+        Some("1h")  => 3600 * 1000,
+        _           => 30 * 60 * 1000,
+    };
+    (now_ms.saturating_sub(span_ms), now_ms)
 }
 
 fn parse_query(s: &str) -> HashMap<String, String> {
@@ -316,6 +383,9 @@ fn route_api(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
                 #[serde(default)] rpm_under_attack_bps: Option<u32>,
                 #[serde(default)] subnet_rpm:  Option<u32>,
                 #[serde(default)] subnet_conn: Option<u32>,
+                #[serde(default)] global_inflight_cap: Option<u32>,
+                #[serde(default)] tarpit_score:        Option<u32>,
+                #[serde(default)] datacenter_block:    Option<bool>,
                 #[serde(default)] rules: Option<RulesPatch>,
                 #[serde(default)] defenses: Option<DefensesPatch>,
                 #[serde(default)] blocked_countries: Option<Vec<String>>,
@@ -376,6 +446,9 @@ fn route_api(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
             }
             if let Some(v) = patch.subnet_rpm  { r.subnet_rpm.store(v, Ordering::Relaxed); }
             if let Some(v) = patch.subnet_conn { r.subnet_conn.store(v, Ordering::Relaxed); }
+            if let Some(v) = patch.global_inflight_cap { r.global_inflight_cap.store(v, Ordering::Relaxed); }
+            if let Some(v) = patch.tarpit_score        { r.tarpit_score.store(v, Ordering::Relaxed); }
+            if let Some(v) = patch.datacenter_block    { r.datacenter_block.store(v, Ordering::Relaxed); }
             if let Some(paths) = patch.honeypot_paths {
                 engine.honeypots.replace(paths);
             }
@@ -415,6 +488,38 @@ fn route_api(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
         }
         _ => (404, "application/json", br#"{"error":"not found"}"#.to_vec()),
     }
+}
+
+/// Persisted timeframe lookups. `?range=30m|1h|6h|24h` (default 30m)
+/// or `?since=ms&until=ms`. Falls back to the in-memory ring when SQLite
+/// isn't open yet.
+async fn route_timeframe(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64).unwrap_or(0);
+    let (since, until) = parse_range(&req.query, now_ms);
+    let limit = req.query.get("limit").and_then(|s| s.parse::<usize>().ok()).unwrap_or(500).min(5000);
+    let path = engine.storage_path();
+
+    if req.path == "/api/events/range" {
+        let body = match path {
+            Some(p) => match waf_core::storage::Storage::open(&p) {
+                Ok(s) => s.query(since, until, limit).await.unwrap_or_default(),
+                Err(_) => engine.events.recent(limit),
+            },
+            None => engine.events.recent(limit),
+        };
+        return ok_json(serde_json::to_vec(&body).unwrap_or_default());
+    }
+    // /api/events/series
+    let buckets = match path {
+        Some(p) => match waf_core::storage::Storage::open(&p) {
+            Ok(s) => s.series(since, until).await.unwrap_or_default(),
+            Err(_) => Vec::new(),
+        },
+        None => Vec::new(),
+    };
+    ok_json(serde_json::to_vec(&buckets).unwrap_or_default())
 }
 
 fn route_static(req: &ParsedReq) -> (u16, &'static str, Vec<u8>) {

@@ -29,8 +29,8 @@ pub fn scan(s: &Surface) -> Option<Hit> {
     ] {
         if PATTERNS.is_match(field) {
             return Some(Hit {
-                rule_id: "LFI-01",
-                category: "lfi",
+                rule_id: "LFI-01".to_string(),
+                category: "lfi".to_string(),
                 matched_field: field_name,
                 matched_excerpt: excerpt(field),
             });

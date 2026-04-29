@@ -25,7 +25,7 @@ pub fn score(ctx: &RequestCtx) -> Vec<DecisionReason> {
         && ctx.content_length.unwrap_or(0) > 0
     {
         out.push(DecisionReason {
-            rule_id: "DDOS-GET-BODY", category: "ddos",
+            rule_id: "DDOS-GET-BODY".to_string(), category: "ddos".to_string(),
             score: W_GET_WITH_BODY,
             detail: format!("{} with content-length={}", ctx.method, ctx.content_length.unwrap()),
         });
@@ -35,7 +35,7 @@ pub fn score(ctx: &RequestCtx) -> Vec<DecisionReason> {
     if let Some(c) = ctx.headers.get("connection") {
         if c.trim().is_empty() {
             out.push(DecisionReason {
-                rule_id: "DDOS-EMPTY-CONN", category: "ddos",
+                rule_id: "DDOS-EMPTY-CONN".to_string(), category: "ddos".to_string(),
                 score: W_EMPTY_CONNECTION,
                 detail: "empty Connection header".into(),
             });
@@ -49,7 +49,7 @@ pub fn score(ctx: &RequestCtx) -> Vec<DecisionReason> {
         && !ctx.headers.contains_key("access-control-request-method")
     {
         out.push(DecisionReason {
-            rule_id: "DDOS-OPTIONS-NOORIG", category: "ddos",
+            rule_id: "DDOS-OPTIONS-NOORIG".to_string(), category: "ddos".to_string(),
             score: W_OPTIONS_NOORIG,
             detail: "OPTIONS without CORS preflight headers".into(),
         });
@@ -58,7 +58,7 @@ pub fn score(ctx: &RequestCtx) -> Vec<DecisionReason> {
     // NUL byte anywhere in the path/query is hostile by definition.
     if ctx.uri.contains('\0') {
         out.push(DecisionReason {
-            rule_id: "DDOS-NUL", category: "ddos",
+            rule_id: "DDOS-NUL".to_string(), category: "ddos".to_string(),
             score: W_NULLBYTE,
             detail: "NUL byte in URI".into(),
         });
@@ -67,7 +67,7 @@ pub fn score(ctx: &RequestCtx) -> Vec<DecisionReason> {
     // Pathological query string (huge / many params).
     if ctx.query.len() > 2048 || ctx.query.matches('&').count() > 64 {
         out.push(DecisionReason {
-            rule_id: "DDOS-QUERY-BLOAT", category: "ddos",
+            rule_id: "DDOS-QUERY-BLOAT".to_string(), category: "ddos".to_string(),
             score: W_QUERY_BLOAT,
             detail: format!("query={}B params={}", ctx.query.len(), ctx.query.matches('&').count() + 1),
         });
@@ -83,7 +83,7 @@ pub fn score(ctx: &RequestCtx) -> Vec<DecisionReason> {
         .count();
     if buster_hits >= 2 {
         out.push(DecisionReason {
-            rule_id: "DDOS-CACHEBUST", category: "ddos",
+            rule_id: "DDOS-CACHEBUST".to_string(), category: "ddos".to_string(),
             score: W_CACHE_BUSTER,
             detail: format!("{} cache-buster keys in query", buster_hits),
         });
@@ -95,7 +95,7 @@ pub fn score(ctx: &RequestCtx) -> Vec<DecisionReason> {
     if let Some(d) = ctx.headers.get("x-duplicated-headers") {
         if d != "0" {
             out.push(DecisionReason {
-                rule_id: "DDOS-DUP-HDR", category: "ddos",
+                rule_id: "DDOS-DUP-HDR".to_string(), category: "ddos".to_string(),
                 score: W_DUP_HEADERS,
                 detail: format!("{} duplicated singleton headers", d),
             });

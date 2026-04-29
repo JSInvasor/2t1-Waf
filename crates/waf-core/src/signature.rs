@@ -55,7 +55,7 @@ impl RequestReplay {
         s.count = s.count.saturating_add(1);
         if s.count >= REPLAY_THRESHOLD {
             return Some(DecisionReason {
-                rule_id: "REPLAY", category: "ddos",
+                rule_id: "REPLAY".to_string(), category: "ddos".to_string(),
                 score: W_REPLAY,
                 detail: format!("{} repeats of same signature in {}s", s.count, REPLAY_WINDOW_SECS),
             });
@@ -106,7 +106,7 @@ impl DistributedUa {
 
         if b.ips.len() >= UA_THRESHOLD_IP {
             return Some(DecisionReason {
-                rule_id: "DIST-UA", category: "ddos",
+                rule_id: "DIST-UA".to_string(), category: "ddos".to_string(),
                 score: W_DIST_UA,
                 detail: format!("UA shared by {} distinct IPs in {}s", b.ips.len(), UA_WINDOW_SECS),
             });

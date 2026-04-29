@@ -26,10 +26,22 @@ pub struct Runtime {
     pub block_threshold: AtomicU32,
     pub max_concurrent_per_ip: AtomicU32,
     pub rpm_under_attack_bps: AtomicU32,
-    /// Per-/24 (IPv4) or /64 (IPv6) RPM cap. 0 disables.
     pub subnet_rpm: AtomicU32,
-    /// Per-subnet concurrent in-flight cap. 0 disables.
     pub subnet_conn: AtomicU32,
+    /// Hard upper bound on global in-flight requests across the whole
+    /// process. When exceeded, new requests are dropped at the door
+    /// without entering the rest of the pipeline. 0 disables the check
+    /// (NOT recommended in production — this is the last line before OOM).
+    pub global_inflight_cap: AtomicU32,
+    /// Score at or above which `evaluate()` returns Action::Tarpit
+    /// instead of Block. Connection is held open writing one byte at
+    /// a time to burn the attacker's socket.
+    pub tarpit_score: AtomicU32,
+    /// When ON, requests originating from a built-in cloud / hosting
+    /// provider CIDR list (OVH, Hetzner, DO, Vultr, Linode, AWS, GCP,
+    /// Azure ranges) are dropped or scored as suspicious depending on
+    /// UAM level.
+    pub datacenter_block: AtomicBool,
 
     pub rules: RuleToggles,
     pub defenses: DefenseToggles,
@@ -102,6 +114,9 @@ pub struct PersistedRuntime {
     #[serde(default)] pub rpm_under_attack_bps: Option<u32>,
     #[serde(default)] pub subnet_rpm:  Option<u32>,
     #[serde(default)] pub subnet_conn: Option<u32>,
+    #[serde(default)] pub global_inflight_cap: Option<u32>,
+    #[serde(default)] pub tarpit_score:        Option<u32>,
+    #[serde(default)] pub datacenter_block:    Option<bool>,
     #[serde(default)] pub allow: Vec<String>,
     #[serde(default)] pub deny: Vec<String>,
     #[serde(default)] pub blocked_countries: Vec<String>,
@@ -165,6 +180,9 @@ impl Runtime {
             },
             subnet_rpm:  AtomicU32::new(2400),
             subnet_conn: AtomicU32::new(800),
+            global_inflight_cap: AtomicU32::new(20_000),
+            tarpit_score:        AtomicU32::new(150),
+            datacenter_block:    AtomicBool::new(false),
             allow: RwLock::new(Vec::new()),
             deny: RwLock::new(Vec::new()),
             blocked_countries: RwLock::new(cfg.geoip.block_countries.clone()),
@@ -216,6 +234,9 @@ impl Runtime {
         if let Some(v) = p.defenses.dist_ua   { self.defenses.dist_ua.store(v, Ordering::Relaxed); }
         if let Some(v) = p.subnet_rpm  { self.subnet_rpm.store(v, Ordering::Relaxed); }
         if let Some(v) = p.subnet_conn { self.subnet_conn.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.global_inflight_cap { self.global_inflight_cap.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.tarpit_score        { self.tarpit_score.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.datacenter_block    { self.datacenter_block.store(v, Ordering::Relaxed); }
 
         let allow: Vec<IpNet> = p.allow.iter().filter_map(|s| parse_net(s).ok()).collect();
         let deny:  Vec<IpNet> = p.deny.iter().filter_map(|s| parse_net(s).ok()).collect();
@@ -262,6 +283,9 @@ impl Runtime {
             },
             subnet_rpm:  Some(self.subnet_rpm.load(Ordering::Relaxed)),
             subnet_conn: Some(self.subnet_conn.load(Ordering::Relaxed)),
+            global_inflight_cap: Some(self.global_inflight_cap.load(Ordering::Relaxed)),
+            tarpit_score:        Some(self.tarpit_score.load(Ordering::Relaxed)),
+            datacenter_block:    Some(self.datacenter_block.load(Ordering::Relaxed)),
             honeypot_paths: None, // filled in by Engine which owns the Honeypots store
             auth_token: Some(self.auth_token.read().clone()),
         }
