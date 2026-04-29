@@ -6,20 +6,23 @@
 
 pub mod behavior;
 pub mod bot_score;
+pub mod challenge;
 pub mod config;
 pub mod connections;
 pub mod ddos;
 pub mod decision;
+pub mod engine;
 pub mod events;
+pub mod honeypots;
+pub mod metrics;
 pub mod ratelimit;
 pub mod reputation;
+pub mod request;
 pub mod rules;
 pub mod runtime;
 pub mod score;
-pub mod challenge;
-pub mod metrics;
-pub mod request;
-pub mod engine;
+pub mod signature;
+pub mod subnet;
 
 pub use config::Config;
 pub use decision::{Action, Decision, DecisionReason};

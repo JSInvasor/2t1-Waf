@@ -6,7 +6,9 @@ use crate::config::ReputationCfg;
 use dashmap::DashMap;
 use ipnet::IpNet;
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -25,13 +27,21 @@ pub struct Reputations {
     duration_secs: u64,
     /// IP → (hit_count, first_hit_secs, ban_until_secs)
     state: DashMap<IpAddr, Mutex<HitState>>,
+    persist_path: parking_lot::RwLock<Option<PathBuf>>,
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
 struct HitState {
     hits: u32,
     first_hit: u64,
     ban_until: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedBan {
+    ip: IpAddr,
+    ban_until: u64,
+    hits: u32,
 }
 
 impl Reputations {
@@ -44,7 +54,47 @@ impl Reputations {
             window_secs: cfg.auto_ban_window_secs,
             duration_secs: cfg.auto_ban_duration_secs,
             state: DashMap::with_capacity(4096),
+            persist_path: parking_lot::RwLock::new(None),
         })
+    }
+
+    /// Bind a path that will receive ban dumps (one JSON line per ban).
+    /// Existing bans are reloaded immediately.
+    pub fn bind_persist_file(&self, path: PathBuf) -> anyhow::Result<()> {
+        if path.exists() {
+            let raw = std::fs::read_to_string(&path)?;
+            let bans: Vec<PersistedBan> = serde_json::from_str(&raw).unwrap_or_default();
+            let now = now_secs();
+            for b in bans {
+                if b.ban_until > now {
+                    self.state.insert(b.ip, Mutex::new(HitState {
+                        hits: b.hits, first_hit: now, ban_until: b.ban_until,
+                    }));
+                }
+            }
+        }
+        *self.persist_path.write() = Some(path);
+        Ok(())
+    }
+
+    pub fn persist(&self) -> anyhow::Result<()> {
+        let path = match self.persist_path.read().clone() {
+            Some(p) => p, None => return Ok(()),
+        };
+        let now = now_secs();
+        let dump: Vec<PersistedBan> = self.state.iter()
+            .filter_map(|e| {
+                let s = e.value().lock();
+                if s.ban_until > now {
+                    Some(PersistedBan { ip: *e.key(), ban_until: s.ban_until, hits: s.hits })
+                } else { None }
+            })
+            .collect();
+        let json = serde_json::to_vec_pretty(&dump)?;
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, &json)?;
+        std::fs::rename(&tmp, &path)?;
+        Ok(())
     }
 
     pub fn classify(&self, ip: IpAddr) -> Reputation {
@@ -76,9 +126,27 @@ impl Reputations {
         s.hits = s.hits.saturating_add(1);
         if s.hits >= self.auto_ban_threshold && s.ban_until <= now {
             s.ban_until = now + self.duration_secs;
+            drop(s);
+            // Best-effort flush; ignore I/O errors here so the request path
+            // never blocks on disk.
+            let _ = self.persist();
             return true;
         }
         false
+    }
+
+    /// Force an immediate ban for a single offence (used for honeypot hits).
+    pub fn force_ban(&self, ip: IpAddr, secs: u64) -> bool {
+        if self.allow.iter().any(|n| n.contains(&ip)) { return false; }
+        let now = now_secs();
+        let entry = self.state.entry(ip).or_insert_with(|| Mutex::new(HitState::default()));
+        let mut s = entry.lock();
+        let until = now + secs;
+        if s.ban_until < until { s.ban_until = until; }
+        s.hits = s.hits.saturating_add(self.auto_ban_threshold);
+        drop(s);
+        let _ = self.persist();
+        true
     }
 
     pub fn unban(&self, ip: IpAddr) {

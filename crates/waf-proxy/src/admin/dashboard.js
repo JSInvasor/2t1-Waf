@@ -65,6 +65,10 @@ const DEFENSE_KEYS = [
   ["bot_score", "Bot score (header / UA fingerprint)"],
   ["behavior",  "Behavior (per-IP entropy / regularity)"],
   ["ddos",      "DDoS patterns (anomalous requests)"],
+  ["honeypots", "Honeypot paths (instant ban)"],
+  ["subnet",    "Subnet ceilings (/24 + /64)"],
+  ["replay",    "Request replay flood"],
+  ["dist_ua",   "Distributed UA (botnet signature)"],
 ];
 function navigate() {
   const hash = location.hash.replace("#/", "") || "overview";
@@ -372,6 +376,15 @@ function applyDefense(rt, m) {
   const ds = rt.defenses || {};
   $$("[data-defense]").forEach(inp => inp.checked = !!ds[inp.dataset.defense]);
 
+  // subnet ceilings
+  if ($("#subnet-rpm"))  $("#subnet-rpm").value  = rt.subnet_rpm  ?? "";
+  if ($("#subnet-conn")) $("#subnet-conn").value = rt.subnet_conn ?? "";
+  // honeypot path list (only fill when not focused)
+  const hp = $("#honeypot-paths");
+  const paths = rt.honeypot_paths || [];
+  if (hp && document.activeElement !== hp) hp.value = paths.join("\n");
+  if ($("#honeypot-count")) $("#honeypot-count").textContent = paths.length;
+
   // top attackers — same as top IPs for now (block-weighted)
   const topAtk = m.top_ips ? m.top_ips.slice(0, 10) : [];
   renderRows($("#top-attackers"), topAtk);
@@ -591,6 +604,22 @@ document.addEventListener("click", async e => {
   // Auto-UAM threshold save
   if (e.target.matches('[data-save="auto-uam"]')) {
     await patchRuntime({ auto_uam_threshold: parseInt($("#auto-uam-threshold").value, 10) });
+    return;
+  }
+  // Subnet ceilings save
+  if (e.target.matches('[data-save="subnet"]')) {
+    await patchRuntime({
+      subnet_rpm:  parseInt($("#subnet-rpm").value, 10),
+      subnet_conn: parseInt($("#subnet-conn").value, 10),
+    });
+    return;
+  }
+  // Honeypot list save
+  if (e.target.id === "honeypot-save") {
+    const paths = $("#honeypot-paths").value
+      .split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    await patchRuntime({ honeypot_paths: paths });
+    toast(`Saved ${paths.length} traps`);
     return;
   }
   if (e.target.matches('[data-save="thresholds"]')) {

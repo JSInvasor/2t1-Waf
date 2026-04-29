@@ -274,11 +274,14 @@ fn route_api(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
     match (req.method.as_str(), req.path.as_str()) {
         ("GET", "/api/state") => {
             let snap = engine.metrics.snapshot();
-            let runtime = engine.runtime.snapshot();
+            let mut runtime = engine.runtime.snapshot();
+            // Honeypots live outside Runtime; merge them into the snapshot.
+            runtime.honeypot_paths = Some(engine.honeypots.snapshot());
             let body = serde_json::json!({
                 "metrics": snap,
                 "runtime": runtime,
                 "in_flight_total": engine.conns.total(),
+                "subnets_tracked": engine.subnets.tracked(),
                 "version": env!("CARGO_PKG_VERSION"),
             });
             ok_json(serde_json::to_vec(&body).unwrap_or_default())
@@ -311,9 +314,12 @@ fn route_api(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
                 #[serde(default)] block_threshold: Option<u32>,
                 #[serde(default)] max_concurrent_per_ip: Option<u32>,
                 #[serde(default)] rpm_under_attack_bps: Option<u32>,
+                #[serde(default)] subnet_rpm:  Option<u32>,
+                #[serde(default)] subnet_conn: Option<u32>,
                 #[serde(default)] rules: Option<RulesPatch>,
                 #[serde(default)] defenses: Option<DefensesPatch>,
                 #[serde(default)] blocked_countries: Option<Vec<String>>,
+                #[serde(default)] honeypot_paths:    Option<Vec<String>>,
             }
             #[derive(Deserialize)]
             struct RulesPatch {
@@ -330,6 +336,10 @@ fn route_api(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
                 #[serde(default)] bot_score: Option<bool>,
                 #[serde(default)] behavior:  Option<bool>,
                 #[serde(default)] ddos:      Option<bool>,
+                #[serde(default)] honeypots: Option<bool>,
+                #[serde(default)] subnet:    Option<bool>,
+                #[serde(default)] replay:    Option<bool>,
+                #[serde(default)] dist_ua:   Option<bool>,
             }
             let patch: Patch = match serde_json::from_slice(&req.body) {
                 Ok(p) => p,
@@ -359,6 +369,15 @@ fn route_api(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
                 if let Some(v) = dp.bot_score { r.defenses.bot_score.store(v, Ordering::Relaxed); }
                 if let Some(v) = dp.behavior  { r.defenses.behavior.store(v, Ordering::Relaxed); }
                 if let Some(v) = dp.ddos      { r.defenses.ddos.store(v, Ordering::Relaxed); }
+                if let Some(v) = dp.honeypots { r.defenses.honeypots.store(v, Ordering::Relaxed); }
+                if let Some(v) = dp.subnet    { r.defenses.subnet.store(v, Ordering::Relaxed); }
+                if let Some(v) = dp.replay    { r.defenses.replay.store(v, Ordering::Relaxed); }
+                if let Some(v) = dp.dist_ua   { r.defenses.dist_ua.store(v, Ordering::Relaxed); }
+            }
+            if let Some(v) = patch.subnet_rpm  { r.subnet_rpm.store(v, Ordering::Relaxed); }
+            if let Some(v) = patch.subnet_conn { r.subnet_conn.store(v, Ordering::Relaxed); }
+            if let Some(paths) = patch.honeypot_paths {
+                engine.honeypots.replace(paths);
             }
             if let Some(c) = patch.blocked_countries {
                 *r.blocked_countries.write() = c.into_iter().map(|s| s.to_ascii_uppercase()).collect();

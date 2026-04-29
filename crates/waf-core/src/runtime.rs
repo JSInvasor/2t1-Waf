@@ -26,6 +26,10 @@ pub struct Runtime {
     pub block_threshold: AtomicU32,
     pub max_concurrent_per_ip: AtomicU32,
     pub rpm_under_attack_bps: AtomicU32,
+    /// Per-/24 (IPv4) or /64 (IPv6) RPM cap. 0 disables.
+    pub subnet_rpm: AtomicU32,
+    /// Per-subnet concurrent in-flight cap. 0 disables.
+    pub subnet_conn: AtomicU32,
 
     pub rules: RuleToggles,
     pub defenses: DefenseToggles,
@@ -55,6 +59,10 @@ pub struct DefenseToggles {
     pub bot_score: AtomicBool,
     pub behavior:  AtomicBool,
     pub ddos:      AtomicBool,
+    pub honeypots: AtomicBool,
+    pub subnet:    AtomicBool,
+    pub replay:    AtomicBool,
+    pub dist_ua:   AtomicBool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,11 +100,14 @@ pub struct PersistedRuntime {
     #[serde(default)] pub block_threshold: Option<u32>,
     #[serde(default)] pub max_concurrent_per_ip: Option<u32>,
     #[serde(default)] pub rpm_under_attack_bps: Option<u32>,
+    #[serde(default)] pub subnet_rpm:  Option<u32>,
+    #[serde(default)] pub subnet_conn: Option<u32>,
     #[serde(default)] pub allow: Vec<String>,
     #[serde(default)] pub deny: Vec<String>,
     #[serde(default)] pub blocked_countries: Vec<String>,
     #[serde(default)] pub rules: PersistedToggles,
     #[serde(default)] pub defenses: PersistedDefenses,
+    #[serde(default)] pub honeypot_paths: Option<Vec<String>>,
     #[serde(default)] pub auth_token: Option<String>,
 }
 
@@ -116,6 +127,10 @@ pub struct PersistedDefenses {
     #[serde(default)] pub bot_score: Option<bool>,
     #[serde(default)] pub behavior:  Option<bool>,
     #[serde(default)] pub ddos:      Option<bool>,
+    #[serde(default)] pub honeypots: Option<bool>,
+    #[serde(default)] pub subnet:    Option<bool>,
+    #[serde(default)] pub replay:    Option<bool>,
+    #[serde(default)] pub dist_ua:   Option<bool>,
 }
 
 impl Runtime {
@@ -143,7 +158,13 @@ impl Runtime {
                 bot_score: AtomicBool::new(true),
                 behavior:  AtomicBool::new(true),
                 ddos:      AtomicBool::new(true),
+                honeypots: AtomicBool::new(true),
+                subnet:    AtomicBool::new(true),
+                replay:    AtomicBool::new(true),
+                dist_ua:   AtomicBool::new(true),
             },
+            subnet_rpm:  AtomicU32::new(2400),
+            subnet_conn: AtomicU32::new(800),
             allow: RwLock::new(Vec::new()),
             deny: RwLock::new(Vec::new()),
             blocked_countries: RwLock::new(cfg.geoip.block_countries.clone()),
@@ -189,6 +210,12 @@ impl Runtime {
         if let Some(v) = p.defenses.bot_score { self.defenses.bot_score.store(v, Ordering::Relaxed); }
         if let Some(v) = p.defenses.behavior  { self.defenses.behavior.store(v, Ordering::Relaxed); }
         if let Some(v) = p.defenses.ddos      { self.defenses.ddos.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.defenses.honeypots { self.defenses.honeypots.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.defenses.subnet    { self.defenses.subnet.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.defenses.replay    { self.defenses.replay.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.defenses.dist_ua   { self.defenses.dist_ua.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.subnet_rpm  { self.subnet_rpm.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.subnet_conn { self.subnet_conn.store(v, Ordering::Relaxed); }
 
         let allow: Vec<IpNet> = p.allow.iter().filter_map(|s| parse_net(s).ok()).collect();
         let deny:  Vec<IpNet> = p.deny.iter().filter_map(|s| parse_net(s).ok()).collect();
@@ -228,7 +255,14 @@ impl Runtime {
                 bot_score: Some(self.defenses.bot_score.load(Ordering::Relaxed)),
                 behavior:  Some(self.defenses.behavior.load(Ordering::Relaxed)),
                 ddos:      Some(self.defenses.ddos.load(Ordering::Relaxed)),
+                honeypots: Some(self.defenses.honeypots.load(Ordering::Relaxed)),
+                subnet:    Some(self.defenses.subnet.load(Ordering::Relaxed)),
+                replay:    Some(self.defenses.replay.load(Ordering::Relaxed)),
+                dist_ua:   Some(self.defenses.dist_ua.load(Ordering::Relaxed)),
             },
+            subnet_rpm:  Some(self.subnet_rpm.load(Ordering::Relaxed)),
+            subnet_conn: Some(self.subnet_conn.load(Ordering::Relaxed)),
+            honeypot_paths: None, // filled in by Engine which owns the Honeypots store
             auth_token: Some(self.auth_token.read().clone()),
         }
     }

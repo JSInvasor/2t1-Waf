@@ -11,6 +11,7 @@ use crate::connections::ConnTracker;
 use crate::ddos;
 use crate::decision::{Decision, DecisionReason};
 use crate::events::EventLog;
+use crate::honeypots::Honeypots;
 use crate::metrics::Metrics;
 use crate::ratelimit::RateLimiter;
 use crate::reputation::{Reputation, Reputations};
@@ -18,6 +19,8 @@ use crate::request::RequestCtx;
 use crate::rules::{self, Surface};
 use crate::runtime::{Runtime, UamLevel};
 use crate::score::*;
+use crate::signature::{DistributedUa, RequestReplay};
+use crate::subnet::SubnetTracker;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
@@ -32,6 +35,10 @@ pub struct Engine {
     pub events: Arc<EventLog>,
     pub conns: Arc<ConnTracker>,
     pub behavior: Arc<BehaviorTracker>,
+    pub subnets:  Arc<SubnetTracker>,
+    pub honeypots: Arc<Honeypots>,
+    pub replay:   Arc<RequestReplay>,
+    pub dist_ua:  Arc<DistributedUa>,
 }
 
 /// Per-UAM level scaling. Returned by `Engine::uam_params`.
@@ -72,6 +79,10 @@ impl Engine {
             events: Arc::new(EventLog::default()),
             conns: Arc::new(ConnTracker::default()),
             behavior: Arc::new(BehaviorTracker::default()),
+            subnets:  Arc::new(SubnetTracker::default()),
+            honeypots: Arc::new(Honeypots::default()),
+            replay:   Arc::new(RequestReplay::default()),
+            dist_ua:  Arc::new(DistributedUa::default()),
         }))
     }
 
@@ -136,6 +147,16 @@ impl Engine {
             };
             self.metrics.blocked.fetch_add(1, Ordering::Relaxed);
             return self.finalize(ctx, Decision::block(req_id, 403, r));
+        }
+
+        // 2.5 Honeypot trip — any request to a trap path is malicious by
+        //     definition. Force-ban immediately and short-circuit.
+        if self.runtime.defenses.honeypots.load(Ordering::Relaxed) {
+            if let Some(r) = self.honeypots.check(&ctx.path) {
+                self.reputations.force_ban(ip, self.cfg.reputation.auto_ban_duration_secs);
+                self.metrics.blocked.fetch_add(1, Ordering::Relaxed);
+                return self.finalize(ctx, Decision::block(req_id, 403, r));
+            }
         }
 
         // 3. Per-IP concurrent request cap (UAM clamps this further).
@@ -216,6 +237,27 @@ impl Engine {
         // DDoS-flavoured request anomalies.
         if self.runtime.defenses.ddos.load(Ordering::Relaxed) {
             for r in ddos::score(ctx) { decision.add_reason(r); }
+        }
+
+        // Per-subnet rate / concurrent ceiling (catches /24 botnets).
+        if self.runtime.defenses.subnet.load(Ordering::Relaxed) {
+            let rpm  = self.runtime.subnet_rpm.load(Ordering::Relaxed);
+            let conn = self.runtime.subnet_conn.load(Ordering::Relaxed) as i64;
+            for r in self.subnets.observe(ip, rpm, conn) { decision.add_reason(r); }
+        }
+
+        // Identical-request replay flood from a single IP.
+        if self.runtime.defenses.replay.load(Ordering::Relaxed) {
+            if let Some(r) = self.replay.observe(ip, &ctx.method, &ctx.path, &ctx.user_agent) {
+                decision.add_reason(r);
+            }
+        }
+
+        // Same UA shared by many distinct IPs in a short window (botnet UA).
+        if self.runtime.defenses.dist_ua.load(Ordering::Relaxed) && !ctx.user_agent.is_empty() {
+            if let Some(r) = self.dist_ua.observe(ip, &ctx.user_agent) {
+                decision.add_reason(r);
+            }
         }
 
         if self.runtime.rules.bot_ua.load(Ordering::Relaxed)

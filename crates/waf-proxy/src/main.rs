@@ -37,8 +37,13 @@ fn main() -> anyhow::Result<()> {
     if !runtime_state_path.is_empty() {
         let path = PathBuf::from(&runtime_state_path);
         if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
-        if let Err(e) = engine.runtime.bind_persist_file(path) {
+        if let Err(e) = engine.runtime.bind_persist_file(path.clone()) {
             tracing::error!(%e, "failed to load runtime state");
+        }
+        // Persist auto-bans alongside runtime state so they survive restarts.
+        let bans_path = path.with_file_name("bans.json");
+        if let Err(e) = engine.reputations.bind_persist_file(bans_path) {
+            tracing::error!(%e, "failed to load persisted bans");
         }
     }
 

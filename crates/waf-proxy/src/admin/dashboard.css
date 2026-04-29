@@ -581,7 +581,7 @@ table.event-table td{ font-family:'JetBrains Mono', monospace; font-variant-nume
   display:grid; grid-template-columns:1fr auto;
   gap:8px; margin-bottom:10px;
 }
-input[type=text], input[type=number], input[type=password]{
+input[type=text], input[type=number], input[type=password], textarea{
   background:var(--bg);
   border:1px solid var(--hair); border-radius:6px;
   padding:9px 12px;
@@ -591,8 +591,9 @@ input[type=text], input[type=number], input[type=password]{
   width:100%;
   outline:none;
   transition:border-color 0.15s, background 0.15s;
+  resize:vertical;
 }
-input:focus{ border-color:var(--ink); background:var(--paper); }
+input:focus, textarea:focus{ border-color:var(--ink); background:var(--paper); }
 
 .cli-btn{
   font-family:'Outfit', sans-serif; font-weight:300; font-size:13px;

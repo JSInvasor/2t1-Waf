@@ -249,13 +249,43 @@
     </div>
 
     <div class="card">
-      <div class="card-head"><h3 class="card-title">Heuristic defenses</h3><span class="card-meta mut">ddos-tuned signal pipeline</span></div>
+      <div class="card-head"><h3 class="card-title">Heuristic defenses</h3><span class="card-meta mut">7 layers · all hot-toggleable</span></div>
       <div class="toggles" id="defense-toggles"></div>
-      <p class="mut" style="margin-top:14px; font-size:11.5px;">
-        <b>Bot score</b> — header completeness, UA / sec-ch-ua consistency, modern browser fingerprints.
-        <b>Behavior</b> — per-IP URL diversity, inter-arrival regularity, method bias, UA churn.
-        <b>DDoS patterns</b> — GET-with-body, empty Connection, CORS-less OPTIONS, cache-buster spam, NUL bytes, query bloat.
+      <p class="mut" style="margin-top:14px; font-size:11px; line-height:1.7;">
+        <b>Bot score</b> — header completeness, UA / sec-ch-ua consistency, modern browser fingerprints.<br>
+        <b>Behavior</b> — per-IP URL diversity, inter-arrival regularity, method bias, UA churn.<br>
+        <b>DDoS patterns</b> — GET-with-body, empty Connection, CORS-less OPTIONS, cache-buster spam, NUL bytes, query bloat.<br>
+        <b>Honeypots</b> — instant ban on requests to <code>/.env</code>, <code>/wp-config.php</code>, scanner trap paths.<br>
+        <b>Subnet</b> — /24 (IPv4) and /64 (IPv6) rate &amp; in-flight ceiling, catches botnets sharing a subnet.<br>
+        <b>Replay</b> — same (method+path+UA) hash hammered 25× from one IP in 30s.<br>
+        <b>Distributed UA</b> — single User-Agent observed from 8+ distinct IPs in 60s (botnet signature).
       </p>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head"><h3 class="card-title">Subnet ceilings</h3><span class="card-meta mut">/24 IPv4 · /64 IPv6</span></div>
+        <label class="form-label">Per-subnet RPM cap (0 = off)</label>
+        <div class="form-row">
+          <input id="subnet-rpm" type="number" min="0" max="1000000">
+          <button class="cli-btn" data-save="subnet">Save</button>
+        </div>
+        <label class="form-label">Per-subnet concurrent in-flight cap (0 = off)</label>
+        <div class="form-row">
+          <input id="subnet-conn" type="number" min="0" max="100000">
+        </div>
+        <p class="mut" style="font-size:11px;">Subnets currently tracked: <span id="subnets-tracked">0</span></p>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3 class="card-title">Honeypot paths</h3><span class="card-meta mut">instant ban · <span id="honeypot-count">0</span> traps</span></div>
+        <p class="mut" style="font-size:11.5px;">One path per line. Endings with <code>/</code> match prefixes; otherwise the match is exact.</p>
+        <textarea id="honeypot-paths" rows="10" placeholder="/.env&#10;/wp-config.php&#10;/.git/config&#10;/phpmyadmin/"></textarea>
+        <div class="form-row" style="margin-top:8px;">
+          <span></span>
+          <button class="cli-btn solid" id="honeypot-save">Save list</button>
+        </div>
+      </div>
     </div>
 
     <div class="grid-2">
