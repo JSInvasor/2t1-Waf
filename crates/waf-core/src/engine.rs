@@ -134,7 +134,6 @@ impl Engine {
                     score: SCORE_DENY_REPUTATION,
                     detail: "ip on deny list or auto-banned".into(),
                 };
-                self.metrics.blocked.fetch_add(1, Ordering::Relaxed);
                 return self.finalize(ctx, Decision::block(req_id, 403, r));
             }
             Reputation::Unknown => {}
@@ -145,7 +144,6 @@ impl Engine {
                 score: SCORE_DENY_REPUTATION,
                 detail: "ip on runtime deny list".into(),
             };
-            self.metrics.blocked.fetch_add(1, Ordering::Relaxed);
             return self.finalize(ctx, Decision::block(req_id, 403, r));
         }
 
@@ -154,7 +152,6 @@ impl Engine {
         if self.runtime.defenses.honeypots.load(Ordering::Relaxed) {
             if let Some(r) = self.honeypots.check(&ctx.path) {
                 self.reputations.force_ban(ip, self.cfg.reputation.auto_ban_duration_secs);
-                self.metrics.blocked.fetch_add(1, Ordering::Relaxed);
                 return self.finalize(ctx, Decision::block(req_id, 403, r));
             }
         }
@@ -171,7 +168,6 @@ impl Engine {
                 score: SCORE_DENY_REPUTATION,
                 detail: format!("{} concurrent > cap {}", in_flight, cap),
             };
-            self.metrics.blocked.fetch_add(1, Ordering::Relaxed);
             return self.finalize(ctx, Decision::block(req_id, 429, r));
         }
 
@@ -195,8 +191,10 @@ impl Engine {
                     score: SCORE_RL_HIT,
                     detail: format!("scope={} retry_after={}s path={}", l.scope, l.retry_after, l.path),
                 };
+                // rate_limited is a separate counter (not derived from action),
+                // so it's still incremented here. action counters live in
+                // metrics::record() called by the proxy layer.
                 self.metrics.rate_limited.fetch_add(1, Ordering::Relaxed);
-                self.metrics.blocked.fetch_add(1, Ordering::Relaxed);
                 return self.finalize(ctx, Decision::block(req_id, 429, r));
             }
         }
@@ -207,7 +205,6 @@ impl Engine {
 
         // 6. UAM force-challenge for fresh visitors (Medium and up).
         if uam.force_challenge {
-            self.metrics.challenged.fetch_add(1, Ordering::Relaxed);
             let r = DecisionReason {
                 rule_id: "UAM-FORCE", category: "anti_ddos",
                 score: 100,
@@ -314,15 +311,12 @@ impl Engine {
                 score = decision.score, banned = new_ban,
                 "blocked by score threshold"
             );
-            self.metrics.blocked.fetch_add(1, Ordering::Relaxed);
             return self.finalize(ctx, Decision::block(req_id, 403, primary));
         }
         if decision.score >= chal_t {
-            self.metrics.challenged.fetch_add(1, Ordering::Relaxed);
             return self.finalize(ctx, Decision::challenge(req_id, decision.score, decision.reasons));
         }
 
-        self.metrics.allowed.fetch_add(1, Ordering::Relaxed);
         self.finalize(ctx, Decision::allow(req_id))
     }
 
@@ -498,8 +492,13 @@ hmac_secret = "a-very-secret-key-of-some-length"
             uri: uri.into(), path: uri.split('?').next().unwrap().into(),
             query: query.into(), host: "h".into(),
             user_agent: "Mozilla/5.0".into(),
-            headers: h, cookies: HashMap::new(),
+            http_version: "HTTP/1.1".into(),
+            headers: h,
+            header_order: vec!["host".into(), "user-agent".into(), "accept".into()],
+            cookie_order: vec![],
+            cookies: HashMap::new(),
             body_preview: vec![], content_length: None, country: None,
+            ja4h: String::new(),
         }
     }
 

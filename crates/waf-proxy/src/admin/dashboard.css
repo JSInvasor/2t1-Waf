@@ -430,6 +430,92 @@ canvas#ring-chart{ width:100%; height:170px; display:block; }
 }
 .row .x:hover{ color:var(--bad); border-color:var(--bad); }
 
+/* ============ event detail panel ============ */
+tr.evt-row{ cursor:pointer; }
+tr.evt-row td.evt-toggle{
+  width:18px; color:var(--muted);
+  font-family:'JetBrains Mono', monospace; font-size:13px;
+  transition:transform 0.15s;
+  display:inline-block;
+}
+tr.evt-row.evt-open td.evt-toggle{ transform:rotate(90deg); color:var(--ink); }
+tr.evt-row.evt-open{ background:var(--bg-2); }
+td.evt-ja4h{
+  font-family:'JetBrains Mono', monospace;
+  color:var(--muted); font-size:11px;
+  max-width:160px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+
+tr.evt-detail{ background:var(--bg-2); }
+tr.evt-detail td{ padding:0 !important; }
+.evt-panel{
+  display:flex; flex-direction:column; gap:14px;
+  padding:18px 22px;
+  border-top:1px solid var(--hair);
+}
+.evt-panel-grid{
+  display:grid; grid-template-columns:1fr 1fr; gap:14px;
+}
+@media (max-width:900px){ .evt-panel-grid{ grid-template-columns:1fr; } }
+.evt-panel-block{
+  background:var(--paper);
+  border:1px solid var(--hair-2); border-radius:6px;
+  padding:12px 14px;
+}
+.evt-panel-title{
+  font-family:'Outfit', sans-serif; font-weight:400;
+  font-size:11px; color:var(--muted);
+  text-transform:uppercase; letter-spacing:0.06em;
+  margin-bottom:8px;
+}
+.evt-panel-title code{ background:transparent; padding:0; color:var(--ink-soft); font-size:12px; }
+
+.dr{
+  display:grid;
+  grid-template-columns:140px 80px 50px 1fr;
+  gap:8px;
+  padding:6px 0;
+  font-family:'JetBrains Mono', monospace;
+  font-size:11.5px;
+  border-bottom:1px dashed var(--hair-2);
+}
+.dr:last-child{ border-bottom:0; }
+.dr-rule{ color:var(--ink); font-weight:500; }
+.dr-cat{ color:var(--muted); }
+.dr-score{ color:var(--bad); text-align:right; font-weight:500; }
+.dr-detail{ color:var(--ink-soft); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+.dh-list{ max-height:240px; overflow-y:auto; }
+.dh{
+  display:grid; grid-template-columns:160px 1fr; gap:8px;
+  padding:5px 0;
+  font-family:'JetBrains Mono', monospace;
+  font-size:11px;
+  border-bottom:1px dashed var(--hair-2);
+}
+.dh:last-child{ border-bottom:0; }
+.dh-k{ color:var(--muted); }
+.dh-v{ color:var(--ink-soft); word-break:break-all; }
+
+.ja4h-full{
+  font-family:'JetBrains Mono', monospace; font-size:11.5px;
+  color:var(--ink); background:var(--bg-2); padding:2px 8px; border-radius:3px;
+  user-select:all;
+}
+.ja4h-parts{ display:flex; flex-direction:column; gap:6px; margin-top:4px; }
+.ja4h-parts > div{
+  display:grid; grid-template-columns:24px 130px 1fr; gap:10px;
+  font-family:'JetBrains Mono', monospace; font-size:11.5px;
+  align-items:center;
+}
+.ja4h-parts .ja4h-k{
+  color:var(--muted); font-weight:500;
+  background:var(--bg-2); padding:2px 6px; border-radius:3px;
+  text-align:center;
+}
+.ja4h-parts code{ background:transparent; padding:0; color:var(--ink); user-select:all; }
+.ja4h-parts .ja4h-d{ color:var(--muted); font-size:10.5px; }
+
 /* ============ defense ============ */
 .uam-card{ position:relative; }
 .uam-levels{

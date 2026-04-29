@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use waf_core::config::UpstreamCfg;
+use waf_core::fingerprint;
 use waf_core::request::{parse_cookie_header, RequestCtx};
 use waf_core::{Action, Decision, Engine};
 
@@ -153,27 +154,53 @@ fn build_request_ctx(session: &Session, engine: &Engine) -> RequestCtx {
     let uri = req.uri.to_string();
     let path = req.uri.path().to_string();
     let query = req.uri.query().unwrap_or("").to_string();
+    let http_version = format!("{:?}", req.version);
 
+    // Preserve header arrival order — http::HeaderMap iterates in insertion
+    // order, which Pingora populates from the wire frame.
+    let mut header_order: Vec<String> = Vec::with_capacity(req.headers.len());
     let mut headers = std::collections::HashMap::with_capacity(req.headers.len());
     for (k, v) in req.headers.iter() {
         if let Ok(vs) = v.to_str() {
-            headers.entry(k.as_str().to_ascii_lowercase()).or_insert_with(|| vs.to_string());
+            let name = k.as_str().to_ascii_lowercase();
+            if !header_order.iter().any(|h| h == &name) {
+                header_order.push(name.clone());
+            }
+            headers.entry(name).or_insert_with(|| vs.to_string());
         }
     }
 
     let host = headers.get("host").cloned().unwrap_or_default();
     let user_agent = headers.get("user-agent").cloned().unwrap_or_default();
     let content_length = headers.get("content-length").and_then(|s| s.parse().ok());
-    let cookies = headers.get("cookie").map(|c| parse_cookie_header(c)).unwrap_or_default();
+
+    let (cookies, cookie_order) = headers.get("cookie")
+        .map(|c| {
+            let m = parse_cookie_header(c);
+            // Preserve cookie order from the header.
+            let order: Vec<String> = c.split(';')
+                .filter_map(|p| p.split_once('='))
+                .map(|(k, _)| k.trim().to_ascii_lowercase())
+                .collect();
+            (m, order)
+        })
+        .unwrap_or_default();
+
+    let ja4h = fingerprint::compute(
+        &method, &http_version, &header_order, &headers, &cookie_order, &cookies,
+    );
 
     RequestCtx {
         request_id: gen_request_id(),
         client_ip,
         method, uri, path, query, host, user_agent,
-        headers, cookies,
+        http_version,
+        headers, header_order,
+        cookie_order, cookies,
         body_preview: Vec::new(),
         content_length,
         country: None,
+        ja4h,
     }
 }
 

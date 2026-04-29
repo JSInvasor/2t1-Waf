@@ -14,8 +14,16 @@ pub struct RequestCtx {
     pub query: String,
     pub host: String,
     pub user_agent: String,
+    /// HTTP version stamp ("HTTP/1.0", "HTTP/1.1", "HTTP/2.0", "HTTP/3.0").
+    pub http_version: String,
     /// Lower-cased header names → values.
     pub headers: HashMap<String, String>,
+    /// Original lower-cased header names in arrival order. Used for the
+    /// JA4H fingerprint and for telling a real browser apart from a bot
+    /// that doesn't preserve Chrome's header ordering.
+    pub header_order: Vec<String>,
+    /// Cookie names in arrival order, lower-cased. Empty if no Cookie header.
+    pub cookie_order: Vec<String>,
     /// Cookie name → value.
     pub cookies: HashMap<String, String>,
     /// The first chunk of the body the proxy has buffered (may be empty).
@@ -23,6 +31,9 @@ pub struct RequestCtx {
     pub content_length: Option<u64>,
     /// ISO 3166-1 alpha-2, populated if a GeoIP DB is configured.
     pub country: Option<String>,
+    /// JA4H fingerprint (HTTP-layer client signature). Pre-computed by the
+    /// proxy when building the context so multiple modules can read it cheap.
+    pub ja4h: String,
 }
 
 impl RequestCtx {

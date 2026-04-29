@@ -83,6 +83,9 @@ window.addEventListener("hashchange", navigate);
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
+function cssEscape(s) {
+  return String(s).replace(/[^\w-]/g, "\\$&");
+}
 function maskToken(t) {
   if (!t) return "";
   if (t.length <= 12) return t;
@@ -471,6 +474,61 @@ function renderRuleToggles(state) {
   `).join("");
 }
 
+function renderDetail(e) {
+  const reasons = (e.reasons || []).map(r => `
+    <div class="dr">
+      <span class="dr-rule">${escapeHtml(r.rule_id)}</span>
+      <span class="dr-cat">${escapeHtml(r.category)}</span>
+      <span class="dr-score">+${r.score}</span>
+      <span class="dr-detail">${escapeHtml(r.detail || "")}</span>
+    </div>
+  `).join("") || `<div class="mut">no signals fired</div>`;
+
+  const headers = (e.headers || []).map(([k, v]) => `
+    <div class="dh"><span class="dh-k">${escapeHtml(k)}</span><span class="dh-v">${escapeHtml(v)}</span></div>
+  `).join("") || `<div class="mut">no headers captured</div>`;
+
+  const ja4h = e.ja4h || "";
+  const parts = ja4h.split("_");
+  const ja4hParts = parts.length === 4
+    ? `<div class="ja4h-parts">
+         <div><span class="ja4h-k">a</span><code>${escapeHtml(parts[0])}</code><span class="ja4h-d">method+ver+cookie+ref+nheaders+lang</span></div>
+         <div><span class="ja4h-k">b</span><code>${escapeHtml(parts[1])}</code><span class="ja4h-d">header order hash</span></div>
+         <div><span class="ja4h-k">c</span><code>${escapeHtml(parts[2])}</code><span class="ja4h-d">cookie names hash</span></div>
+         <div><span class="ja4h-k">d</span><code>${escapeHtml(parts[3])}</code><span class="ja4h-d">cookie values hash</span></div>
+       </div>`
+    : "";
+
+  return `
+    <div class="evt-panel">
+      <div class="evt-panel-grid">
+        <div class="evt-panel-block">
+          <div class="evt-panel-title">Why · ${(e.reasons||[]).length} reason(s) · score ${e.score}</div>
+          ${reasons}
+        </div>
+        <div class="evt-panel-block">
+          <div class="evt-panel-title">Request</div>
+          <div class="dh"><span class="dh-k">request id</span><span class="dh-v">${escapeHtml(e.request_id)}</span></div>
+          <div class="dh"><span class="dh-k">http</span><span class="dh-v">${escapeHtml(e.http_version)}</span></div>
+          <div class="dh"><span class="dh-k">method</span><span class="dh-v">${escapeHtml(e.method)} ${escapeHtml(e.path)}</span></div>
+          <div class="dh"><span class="dh-k">query</span><span class="dh-v">${escapeHtml(e.query || "—")}</span></div>
+          <div class="dh"><span class="dh-k">host</span><span class="dh-v">${escapeHtml(e.host)}</span></div>
+          <div class="dh"><span class="dh-k">user-agent</span><span class="dh-v">${escapeHtml(e.user_agent || "—")}</span></div>
+          <div class="dh"><span class="dh-k">country</span><span class="dh-v">${escapeHtml(e.country || "—")}</span></div>
+        </div>
+      </div>
+      <div class="evt-panel-block">
+        <div class="evt-panel-title">JA4H · <code class="ja4h-full">${escapeHtml(ja4h)}</code></div>
+        ${ja4hParts}
+      </div>
+      <div class="evt-panel-block">
+        <div class="evt-panel-title">Headers (in arrival order)</div>
+        <div class="dh-list">${headers}</div>
+      </div>
+    </div>
+  `;
+}
+
 function renderEvents(events, append = false) {
   const tbody = $("#event-tbody");
   const fA = $("#filter-allow").checked;
@@ -489,18 +547,24 @@ function renderEvents(events, append = false) {
     return true;
   };
 
-  const render = e => `<tr>
-    <td>${new Date(e.ts_ms).toLocaleTimeString()}</td>
-    <td>${escapeHtml(e.ip)}</td>
-    <td>${escapeHtml(e.country || "—")}</td>
-    <td>${escapeHtml(e.method)}</td>
-    <td>${escapeHtml(e.host)}</td>
-    <td title="${escapeHtml(e.path)}">${escapeHtml((e.path||"").slice(0,60))}</td>
-    <td><span class="badge ${e.action}">${e.action}</span></td>
-    <td>${e.status}</td>
-    <td>${e.score}</td>
-    <td>${escapeHtml(e.rule_id || "")}</td>
-  </tr>`;
+  const render = e => {
+    const ja4hShort = (e.ja4h || "").slice(0, 18);
+    return `<tr class="evt-row" data-rid="${escapeHtml(e.request_id)}">
+      <td class="evt-toggle">›</td>
+      <td>${new Date(e.ts_ms).toLocaleTimeString()}</td>
+      <td>${escapeHtml(e.ip)}</td>
+      <td>${escapeHtml(e.country || "—")}</td>
+      <td>${escapeHtml(e.method)}</td>
+      <td>${escapeHtml(e.host)}</td>
+      <td title="${escapeHtml(e.path)}">${escapeHtml((e.path||"").slice(0,50))}</td>
+      <td><span class="badge ${e.action}">${e.action}</span></td>
+      <td>${e.status}</td>
+      <td>${e.score}</td>
+      <td>${escapeHtml(e.rule_id || "")}</td>
+      <td class="evt-ja4h" title="${escapeHtml(e.ja4h || "")}">${escapeHtml(ja4hShort)}…</td>
+    </tr>
+    <tr class="evt-detail hidden" data-detail-rid="${escapeHtml(e.request_id)}"><td colspan="12">${renderDetail(e)}</td></tr>`;
+  };
 
   if (append) {
     const html = events.filter(accept).map(render).join("");
@@ -580,6 +644,18 @@ document.addEventListener("change", async e => {
 });
 
 document.addEventListener("click", async e => {
+  // Event row → toggle the detail row right below it
+  const evtRow = e.target.closest(".evt-row");
+  if (evtRow && !e.target.matches("a, button, input")) {
+    const rid = evtRow.dataset.rid;
+    const detail = document.querySelector(`tr.evt-detail[data-detail-rid="${cssEscape(rid)}"]`);
+    if (detail) {
+      const open = !detail.classList.contains("hidden");
+      detail.classList.toggle("hidden", open);
+      evtRow.classList.toggle("evt-open", !open);
+    }
+    return;
+  }
   // UAM level buttons
   const uamBtn = e.target.closest("[data-uam]");
   if (uamBtn) {
