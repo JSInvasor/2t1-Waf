@@ -208,8 +208,41 @@ h2.h{
 
 /* ============ select row ============ */
 .select-row{
-  display:grid; grid-template-columns:2fr 1fr; gap:10px;
+  display:grid; grid-template-columns:2fr auto; gap:10px;
   margin-bottom:14px;
+  align-items:center;
+}
+.range-pills{
+  display:inline-flex;
+  background:var(--paper);
+  border:1px solid var(--hair); border-radius:8px;
+  padding:3px;
+  gap:2px;
+}
+.range-pill{
+  background:transparent; border:0;
+  padding:6px 14px;
+  border-radius:6px;
+  font-family:'JetBrains Mono', monospace;
+  font-size:12px; color:var(--muted);
+  cursor:pointer;
+  display:inline-flex; align-items:center; gap:6px;
+  transition:background 0.15s, color 0.15s;
+}
+.range-pill:hover{ color:var(--ink); }
+.range-pill[aria-selected="true"]{
+  background:var(--ink); color:var(--bg);
+}
+.range-pill .rp-dot{
+  width:6px; height:6px; border-radius:50%;
+  background:var(--ok);
+  box-shadow:0 0 6px var(--ok);
+  animation:rp-pulse 1.4s infinite ease-in-out;
+}
+.range-pill[aria-selected="true"] .rp-dot{ background:#fff; box-shadow:0 0 6px #fff; }
+@keyframes rp-pulse{
+  0%,100%{ opacity:1; transform:scale(1); }
+  50%    { opacity:.4; transform:scale(.85); }
 }
 .select{
   background:var(--paper);

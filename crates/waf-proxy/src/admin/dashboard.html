@@ -134,7 +134,13 @@
 
     <div class="select-row">
       <div class="select"><span class="sel-mark">$</span><span id="sel-host">protected origin</span><span class="sel-chev">›</span></div>
-      <div class="select"><span id="sel-range">last 60 seconds</span><span class="sel-chev">›</span></div>
+      <div class="range-pills" id="range-pills" role="tablist">
+        <button class="range-pill" data-range="live" aria-selected="true"><span class="rp-dot"></span>Live</button>
+        <button class="range-pill" data-range="30m">30m</button>
+        <button class="range-pill" data-range="1h">1h</button>
+        <button class="range-pill" data-range="6h">6h</button>
+        <button class="range-pill" data-range="24h">24h</button>
+      </div>
     </div>
 
     <div class="kpi-strip">

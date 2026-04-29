@@ -6,6 +6,13 @@ const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const TOKEN_KEY = "2t1_token";
 let token = localStorage.getItem(TOKEN_KEY) || "";
 
+/// Active timeframe for the Overview page.
+/// "live" = follow the SSE stream (60s ring buffer in metrics).
+/// "30m"|"1h"|"6h"|"24h" = SQLite-backed historical view; SSE is
+///                          paused while a historical range is selected.
+let activeRange = "live";
+let historicalTimer = null;
+
 const RULES = [
   ["sqli",       "SQL injection"],
   ["xss",        "XSS"],
@@ -642,6 +649,99 @@ document.addEventListener("change", async e => {
     toast(e.target.checked ? "Auto-UAM watching" : "Auto-UAM off");
   }
 });
+
+// Range pill clicks (Live / 30m / 1h / 6h / 24h)
+document.addEventListener("click", e => {
+  const pill = e.target.closest(".range-pill");
+  if (!pill) return;
+  const range = pill.dataset.range;
+  if (range === activeRange) return;
+  $$(".range-pill").forEach(p => p.setAttribute("aria-selected", p === pill ? "true" : "false"));
+  setRange(range);
+});
+
+function setRange(range) {
+  activeRange = range;
+  if (historicalTimer) { clearInterval(historicalTimer); historicalTimer = null; }
+  if (range === "live") {
+    // Reconnect SSE — apply() resumes driving the charts in real time.
+    connectStream();
+    return;
+  }
+  // Pause SSE for historical view; counter increments would be misleading
+  // when the chart is showing minutes / hours of replayed data.
+  if (es) { es.close(); es = null; }
+  $("#status-dot").classList.remove("live"); $("#status-dot").classList.add("bad");
+  $("#conn-state").textContent = "frozen · " + range;
+  loadHistorical(range);
+  // Refresh every 30s so the operator sees new data accumulate without
+  // hammering the SQLite reader.
+  historicalTimer = setInterval(() => loadHistorical(range), 30_000);
+}
+
+async function loadHistorical(range) {
+  try {
+    const [seriesR, eventsR] = await Promise.all([
+      api(`/api/events/series?range=${encodeURIComponent(range)}`),
+      api(`/api/events/range?range=${encodeURIComponent(range)}&limit=500`),
+    ]);
+    if (!seriesR.ok || !eventsR.ok) return;
+    const buckets = await seriesR.json();
+    const events  = await eventsR.json();
+    applyHistorical(buckets, events, range);
+  } catch (e) { /* silent — pill stays selected */ }
+}
+
+function applyHistorical(buckets, events, range) {
+  // Tally totals over the window for the KPI strip.
+  let allowed = 0, challenged = 0, blocked = 0, tarpit = 0;
+  for (const b of buckets) {
+    allowed   += b.allowed   || 0;
+    challenged += b.challenged || 0;
+    blocked   += b.blocked   || 0;
+    tarpit    += b.tarpit    || 0;
+  }
+  const total = allowed + challenged + blocked + tarpit;
+  $("#stat-total")    && ($("#stat-total").textContent    = total.toLocaleString());
+  $("#stat-allowed")  && ($("#stat-allowed").textContent  = allowed.toLocaleString());
+  $("#stat-blocked")  && ($("#stat-blocked").textContent  = (blocked+tarpit).toLocaleString());
+  $("#stat-challenged") && ($("#stat-challenged").textContent = challenged.toLocaleString());
+
+  // Distinct IPs and rule rules from the events sample.
+  const uniqIps = new Set(events.map(e => e.ip));
+  const cc      = new Set(events.map(e => e.country).filter(Boolean));
+  $("#stat-uniq-ips")        && ($("#stat-uniq-ips").textContent        = uniqIps.size.toLocaleString());
+  $("#stat-uniq-countries")  && ($("#stat-uniq-countries").textContent  = cc.size.toLocaleString());
+  const span_s = rangeToSeconds(range);
+  $("#stat-rps")        && ($("#stat-rps").textContent        = Math.round(total / Math.max(span_s, 1)).toLocaleString());
+  $("#stat-block-rate") && ($("#stat-block-rate").textContent = (total ? Math.round(100 * (blocked+tarpit) / total) : 0) + "%");
+
+  $("#block-ratio-mini") && ($("#block-ratio-mini").textContent = (total ? Math.round(100 * (blocked+tarpit) / total) : 0) + "%");
+
+  // Draw the smoothed area chart against the per-second buckets.
+  const chartBuckets = buckets.map(b => ({
+    allowed: b.allowed||0, challenged: b.challenged||0,
+    blocked: (b.blocked||0) + (b.tarpit||0),
+  }));
+  if (chartBuckets.length) {
+    drawRing(chartBuckets);
+    drawRatio(chartBuckets);
+  }
+
+  // Replay the events into the live-traffic table (rendered with the
+  // same row/expand machinery as Live mode).
+  renderEvents(events, false);
+}
+
+function rangeToSeconds(range) {
+  switch (range) {
+    case "30m": return 30 * 60;
+    case "1h":  return 3600;
+    case "6h":  return 6 * 3600;
+    case "24h": return 24 * 3600;
+    default:    return 60;
+  }
+}
 
 document.addEventListener("click", async e => {
   // Event row → toggle the detail row right below it
