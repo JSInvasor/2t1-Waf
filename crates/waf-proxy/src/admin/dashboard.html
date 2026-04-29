@@ -128,29 +128,68 @@
   <!-- ============== OVERVIEW ============== -->
   <section data-page="overview" class="page wrap">
     <div class="page-head">
-      <h2 class="h">Overview</h2>
-      <div class="h-sub">Live counters, top entities, and a 60-second per-second chart.</div>
+      <h2 class="h">Statistics</h2>
+      <div class="h-sub">Real-time counters and a 60-second activity chart for the protected origin.</div>
     </div>
 
-    <div class="kpi-row">
-      <div class="kpi"><div class="kpi-label">Allowed</div><div class="kpi-value" id="kpi-allowed">0</div><div class="kpi-bar ok"></div></div>
-      <div class="kpi"><div class="kpi-label">Challenged</div><div class="kpi-value" id="kpi-challenged">0</div><div class="kpi-bar warn"></div></div>
-      <div class="kpi"><div class="kpi-label">Blocked</div><div class="kpi-value" id="kpi-blocked">0</div><div class="kpi-bar bad"></div></div>
-      <div class="kpi"><div class="kpi-label">Rate-limited</div><div class="kpi-value" id="kpi-rate-limited">0</div><div class="kpi-bar"></div></div>
-      <div class="kpi"><div class="kpi-label">In-flight</div><div class="kpi-value" id="kpi-in-flight">0</div><div class="kpi-bar"></div></div>
-      <div class="kpi"><div class="kpi-label">Upstream errors</div><div class="kpi-value" id="kpi-upstream-errors">0</div><div class="kpi-bar bad"></div></div>
+    <div class="select-row">
+      <div class="select"><span class="sel-mark">$</span><span id="sel-host">protected origin</span><span class="sel-chev">›</span></div>
+      <div class="select"><span id="sel-range">last 60 seconds</span><span class="sel-chev">›</span></div>
     </div>
 
-    <div class="card">
-      <div class="card-head">
-        <h3 class="card-title">Last 60 seconds</h3>
-        <div class="legend">
-          <span class="lg ok">allow</span>
-          <span class="lg warn">challenge</span>
-          <span class="lg bad">block</span>
+    <div class="kpi-strip">
+      <div class="kpi-stat"><div class="kpi-label">Total requests</div><div class="kpi-stat-value" id="stat-total">0</div></div>
+      <div class="kpi-stat"><div class="kpi-label">Allowed</div><div class="kpi-stat-value ok" id="stat-allowed">0</div></div>
+      <div class="kpi-stat"><div class="kpi-label">Blocks</div><div class="kpi-stat-value bad" id="stat-blocked">0</div></div>
+      <div class="kpi-stat"><div class="kpi-label">Challenges</div><div class="kpi-stat-value warn" id="stat-challenged">0</div></div>
+      <div class="kpi-stat"><div class="kpi-label">Unique IPs</div><div class="kpi-stat-value" id="stat-uniq-ips">0</div></div>
+      <div class="kpi-stat"><div class="kpi-label">Countries</div><div class="kpi-stat-value" id="stat-uniq-countries">0</div></div>
+    </div>
+
+    <div class="kpi-strip three">
+      <div class="kpi-stat"><div class="kpi-label"><span class="dot ok"></span>RPS · current</div><div class="kpi-stat-value mono" id="stat-rps">0</div></div>
+      <div class="kpi-stat"><div class="kpi-label"><span class="dot warn"></span>Block rate</div><div class="kpi-stat-value mono" id="stat-block-rate">0%</div></div>
+      <div class="kpi-stat"><div class="kpi-label"><span class="dot bad"></span>In-flight</div><div class="kpi-stat-value mono" id="stat-inflight">0</div></div>
+    </div>
+
+    <div class="grid-charts">
+      <div class="card chart-card">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Requests per second</div>
+            <div class="chart-sub mut">last 60 sec · stacked allow / challenge / block</div>
+          </div>
+          <div class="legend">
+            <span class="lg ok">allow</span>
+            <span class="lg warn">challenge</span>
+            <span class="lg bad">block</span>
+          </div>
         </div>
+        <canvas id="ring-chart" height="220"></canvas>
+        <div class="chart-axis" id="chart-axis"></div>
       </div>
-      <canvas id="ring-chart" height="170"></canvas>
+
+      <div class="card chart-card">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Block ratio</div>
+            <div class="chart-sub mut">last 60 sec · share of decisions blocked</div>
+          </div>
+          <div class="ratio-mini" id="block-ratio-mini">—</div>
+        </div>
+        <canvas id="ratio-chart" height="220"></canvas>
+      </div>
+    </div>
+
+    <div class="card compare-card">
+      <div class="compare-head">Compare · last 60s vs previous 60s</div>
+      <div class="compare-row">
+        <div class="cmp"><div class="cmp-label">Total requests</div><div class="cmp-val" id="cmp-total">—</div><div class="cmp-delta" id="cmp-total-d">—</div></div>
+        <div class="cmp"><div class="cmp-label">Allowed</div><div class="cmp-val ok" id="cmp-allowed">—</div><div class="cmp-delta" id="cmp-allowed-d">—</div></div>
+        <div class="cmp"><div class="cmp-label">Blocks</div><div class="cmp-val bad" id="cmp-blocks">—</div><div class="cmp-delta" id="cmp-blocks-d">—</div></div>
+        <div class="cmp"><div class="cmp-label">Challenges</div><div class="cmp-val warn" id="cmp-challenges">—</div><div class="cmp-delta" id="cmp-challenges-d">—</div></div>
+        <div class="cmp"><div class="cmp-label">Avg RPS</div><div class="cmp-val mono" id="cmp-rps">—</div><div class="cmp-delta" id="cmp-rps-d">—</div></div>
+      </div>
     </div>
 
     <div class="grid-2">

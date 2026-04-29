@@ -124,53 +124,194 @@ function renderListRows(el, items, suffix = "", action = null) {
 }
 
 // ============== chart ==============
+
+function setupCanvas(c, fixedH) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = c.clientWidth, h = fixedH || c.clientHeight || 170;
+  c.width = w * dpr; c.height = h * dpr;
+  const ctx = c.getContext("2d"); ctx.scale(dpr, dpr);
+  return { ctx, w, h };
+}
+
+function smoothPath(ctx, points, w, h) {
+  // Catmull-Rom-ish smoothing using quadratic curves between midpoints.
+  if (points.length < 2) return;
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i];
+    const p1 = points[i+1];
+    const xc = (p0.x + p1.x) / 2;
+    const yc = (p0.y + p1.y) / 2;
+    ctx.quadraticCurveTo(p0.x, p0.y, xc, yc);
+  }
+  const last = points[points.length-1];
+  ctx.lineTo(last.x, last.y);
+}
+
 function drawRing(buckets) {
   const c = $("#ring-chart");
   if (!c) return;
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  const w = c.clientWidth, h = c.clientHeight || 170;
-  c.width = w * dpr; c.height = h * dpr;
-  const ctx = c.getContext("2d"); ctx.scale(dpr, dpr);
+  const { ctx, w, h } = setupCanvas(c, 220);
   ctx.clearRect(0, 0, w, h);
 
   // grid lines
-  ctx.strokeStyle = "rgba(17,17,17,0.07)"; ctx.lineWidth = 1;
-  for (let i = 1; i < 4; i++) {
-    const y = (h / 4) * i;
+  ctx.strokeStyle = "rgba(17,17,17,0.06)"; ctx.lineWidth = 1;
+  for (let i = 1; i < 5; i++) {
+    const y = (h / 5) * i;
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
   }
 
-  const max = Math.max(1, ...buckets.flatMap(b => [b.allowed, b.challenged, b.blocked]));
-  const bw = w / Math.max(buckets.length, 1);
-  buckets.forEach((b, i) => {
-    const x = i * bw;
-    if ((b.allowed + b.challenged + b.blocked) === 0) return;
-    const ya = h - (b.allowed / max) * h;
-    const yc = ya - (b.challenged / max) * h;
-    const yb = yc - (b.blocked / max) * h;
-    ctx.fillStyle = "#1f6f3a"; ctx.fillRect(x, ya, Math.max(1, bw - 1), h - ya);
-    ctx.fillStyle = "#b87900"; ctx.fillRect(x, yc, Math.max(1, bw - 1), ya - yc);
-    ctx.fillStyle = "#b3203a"; ctx.fillRect(x, yb, Math.max(1, bw - 1), yc - yb);
+  // axis labels (start / end seconds)
+  const axis = $("#chart-axis");
+  if (axis) {
+    const now = new Date();
+    const past = new Date(now.getTime() - 60000);
+    const fmt = d => d.toTimeString().slice(0,8);
+    axis.innerHTML = `<span>${fmt(past)}</span><span>${fmt(now)}</span>`;
+  }
+
+  const allowed   = buckets.map(b => b.allowed   || 0);
+  const challenge = buckets.map(b => b.challenged || 0);
+  const blocked   = buckets.map(b => b.blocked   || 0);
+  const stack3 = buckets.map((_, i) => allowed[i] + challenge[i] + blocked[i]);
+  const stack2 = buckets.map((_, i) => allowed[i] + challenge[i]);
+  const stack1 = allowed;
+
+  const max = Math.max(1, ...stack3);
+  const stepX = w / Math.max(buckets.length - 1, 1);
+
+  const toPoints = (arr) => arr.map((v, i) => ({
+    x: i * stepX,
+    y: h - (v / max) * h,
+  }));
+
+  const drawArea = (pts, fill, stroke) => {
+    ctx.beginPath();
+    smoothPath(ctx, pts, w, h);
+    ctx.lineTo(pts[pts.length-1].x, h);
+    ctx.lineTo(pts[0].x, h);
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+    if (stroke) {
+      ctx.beginPath(); smoothPath(ctx, pts, w, h);
+      ctx.strokeStyle = stroke; ctx.lineWidth = 1.5; ctx.stroke();
+    }
+  };
+
+  drawArea(toPoints(stack3), "rgba(179,32,58,0.18)",  "#b3203a");
+  drawArea(toPoints(stack2), "rgba(184,121,0,0.18)",  "#b87900");
+  drawArea(toPoints(stack1), "rgba(31,111,58,0.18)",  "#1f6f3a");
+}
+
+function drawRatio(buckets) {
+  const c = $("#ratio-chart");
+  if (!c) return;
+  const { ctx, w, h } = setupCanvas(c, 220);
+  ctx.clearRect(0, 0, w, h);
+
+  ctx.strokeStyle = "rgba(17,17,17,0.06)"; ctx.lineWidth = 1;
+  for (let i = 1; i < 5; i++) {
+    const y = (h / 5) * i;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+  }
+
+  const ratios = buckets.map(b => {
+    const t = (b.allowed||0) + (b.challenged||0) + (b.blocked||0);
+    return t ? (b.blocked||0) / t : 0;
   });
+  const stepX = w / Math.max(buckets.length - 1, 1);
+  const pts = ratios.map((v, i) => ({ x: i * stepX, y: h - v * h }));
+
+  ctx.beginPath();
+  smoothPath(ctx, pts, w, h);
+  ctx.lineTo(pts[pts.length-1].x, h);
+  ctx.lineTo(pts[0].x, h);
+  ctx.closePath();
+  ctx.fillStyle = "rgba(179,32,58,0.15)"; ctx.fill();
+
+  ctx.beginPath(); smoothPath(ctx, pts, w, h);
+  ctx.strokeStyle = "#b3203a"; ctx.lineWidth = 2; ctx.stroke();
 }
 
 // ============== state apply ==============
+// last 60s vs previous 60s (computed each tick from snapshots)
+let prevWindow = { total: null, allowed: null, blocked: null, challenged: null, rps: null };
+let lastRoll = 0;
+function rollCompareWindow(total, allowed, blocked, challenged, rps) {
+  const now = Date.now();
+  if (!lastRoll) { lastRoll = now; return; }
+  if (now - lastRoll < 60_000) return;
+  prevWindow = { total, allowed, blocked, challenged, rps };
+  lastRoll = now;
+}
+function setCmp(sel, cur, prev) {
+  const el = $(sel); if (!el) return;
+  el.textContent = (cur||0).toLocaleString();
+  const dEl = $(sel + "-d"); if (!dEl) return;
+  const delta = (cur||0) - (prev||0);
+  if (prev === 0 || prev == null) {
+    dEl.textContent = (delta > 0 ? "+" : "") + delta.toLocaleString();
+    dEl.className = "cmp-delta " + (delta > 0 ? "up" : delta < 0 ? "down" : "");
+    return;
+  }
+  const pct = Math.round(100 * delta / prev);
+  const arrow = delta > 0 ? "↑" : delta < 0 ? "↓" : "·";
+  dEl.textContent = `${arrow} ${(pct >= 0 ? "+" : "")}${pct}%`;
+  dEl.className = "cmp-delta " + (delta > 0 ? "up" : delta < 0 ? "down" : "");
+}
+
 function apply(data) {
   if (!data) return;
   const m = data.metrics || {};
   const rt = data.runtime || {};
-  $("#kpi-allowed").textContent       = (m.allowed || 0).toLocaleString();
-  $("#kpi-challenged").textContent    = (m.challenged || 0).toLocaleString();
-  $("#kpi-blocked").textContent       = (m.blocked || 0).toLocaleString();
-  $("#kpi-rate-limited").textContent  = (m.rate_limited || 0).toLocaleString();
-  $("#kpi-in-flight").textContent     = (data.in_flight_total || 0).toLocaleString();
-  $("#kpi-upstream-errors").textContent = (m.upstream_errors || 0).toLocaleString();
+  const ring = m.ring || [];
+
+  // last-60s window from ring
+  const win60 = ring.reduce((a, b) => ({
+    a: a.a + (b.allowed||0),
+    c: a.c + (b.challenged||0),
+    b: a.b + (b.blocked||0),
+  }), {a:0,c:0,b:0});
+  const win60Total = win60.a + win60.c + win60.b;
+  const rps = Math.round(win60Total / Math.max(ring.length, 1));
+
+  // KPI strip (lifetime totals)
+  const lifetimeTotal = (m.allowed||0) + (m.challenged||0) + (m.blocked||0);
+  $("#stat-total")?.textContent && ($("#stat-total").textContent = lifetimeTotal.toLocaleString());
+  $("#stat-allowed")    && ($("#stat-allowed").textContent    = (m.allowed||0).toLocaleString());
+  $("#stat-blocked")    && ($("#stat-blocked").textContent    = (m.blocked||0).toLocaleString());
+  $("#stat-challenged") && ($("#stat-challenged").textContent = (m.challenged||0).toLocaleString());
+  $("#stat-uniq-ips")   && ($("#stat-uniq-ips").textContent   = (m.unique_ips||0).toLocaleString());
+  $("#stat-uniq-countries") && ($("#stat-uniq-countries").textContent = (m.unique_countries||0).toLocaleString());
+
+  $("#stat-rps")        && ($("#stat-rps").textContent        = rps.toLocaleString());
+  $("#stat-block-rate") && ($("#stat-block-rate").textContent = (win60Total ? Math.round(100 * win60.b / win60Total) : 0) + "%");
+  $("#stat-inflight")   && ($("#stat-inflight").textContent   = (data.in_flight_total||0).toLocaleString());
+
+  $("#block-ratio-mini") && ($("#block-ratio-mini").textContent = (win60Total ? Math.round(100 * win60.b / win60Total) : 0) + "%");
+
   if (data.version) $("#version").textContent = "v" + data.version;
   $("#inflight-state").textContent = (data.in_flight_total || 0).toLocaleString();
   $("#ua-state").textContent = rt.under_attack ? "ON" : "off";
   $("#ua-state").style.color = rt.under_attack ? "var(--bad)" : "";
 
-  if (m.ring) drawRing(m.ring);
+  // Compare row (current 60s window vs previous 60s sample we held).
+  if (prevWindow.total !== null) {
+    setCmp("#cmp-total",      win60Total,      prevWindow.total);
+    setCmp("#cmp-allowed",    win60.a,         prevWindow.allowed);
+    setCmp("#cmp-blocks",     win60.b,         prevWindow.blocked);
+    setCmp("#cmp-challenges", win60.c,         prevWindow.challenged);
+    setCmp("#cmp-rps",        rps,             prevWindow.rps);
+  }
+
+  if (ring.length) {
+    drawRing(ring);
+    drawRatio(ring);
+  }
+
+  // Roll the comparison window every 60 seconds.
+  rollCompareWindow(win60Total, win60.a, win60.b, win60.c, rps);
 
   renderRows($("#top-ips"),       (m.top_ips || []));
   renderRows($("#top-paths"),     (m.top_paths || []));
