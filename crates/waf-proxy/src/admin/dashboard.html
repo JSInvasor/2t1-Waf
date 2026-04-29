@@ -64,6 +64,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
       Overview
     </a>
+    <a href="#/defense" class="nav-item" data-route="defense">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2 4 5v6c0 5 3.5 9 8 11 4.5-2 8-6 8-11V5l-8-3z"/><path d="m9 12 2 2 4-4"/></svg>
+      Defense
+    </a>
     <a href="#/firewall" class="nav-item" data-route="firewall">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
       Firewall
@@ -154,6 +158,80 @@
       <div class="card"><div class="card-head"><h3 class="card-title">Top paths</h3></div><div class="rows" id="top-paths"></div></div>
       <div class="card"><div class="card-head"><h3 class="card-title">Top rules</h3></div><div class="rows" id="top-rules"></div></div>
       <div class="card"><div class="card-head"><h3 class="card-title">Top countries</h3></div><div class="rows" id="top-countries"></div></div>
+    </div>
+  </section>
+
+  <!-- ============== DEFENSE ============== -->
+  <section data-page="defense" class="page wrap hidden">
+    <div class="page-head">
+      <h2 class="h">Defense</h2>
+      <div class="h-sub">Anti-DDoS posture. Switch UAM levels, toggle defenses, and let the watchdog drive escalation automatically when a flood lands.</div>
+    </div>
+
+    <div class="card uam-card">
+      <div class="card-head">
+        <h3 class="card-title">Under-Attack Mode</h3>
+        <span class="card-meta mut" id="uam-current">level —</span>
+      </div>
+      <div class="uam-levels">
+        <button class="uam-lvl" data-uam="0"><span class="lvl-num">0</span><span class="lvl-name">Off</span><span class="lvl-desc">normal traffic</span></button>
+        <button class="uam-lvl" data-uam="1"><span class="lvl-num">1</span><span class="lvl-name">Low</span><span class="lvl-desc">tight thresholds</span></button>
+        <button class="uam-lvl" data-uam="2"><span class="lvl-num">2</span><span class="lvl-name">Medium</span><span class="lvl-desc">force challenge · 50% RPM</span></button>
+        <button class="uam-lvl" data-uam="3"><span class="lvl-num">3</span><span class="lvl-name">High</span><span class="lvl-desc">25% RPM · cap 50</span></button>
+        <button class="uam-lvl" data-uam="4"><span class="lvl-num">4</span><span class="lvl-name">Extreme</span><span class="lvl-desc">10% RPM · cap 25</span></button>
+      </div>
+      <button class="cli-btn panic" id="panic-btn">⚠ PANIC · go Extreme</button>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head"><h3 class="card-title">Auto-UAM watchdog</h3></div>
+        <p class="mut">Sample window 5s · escalates when blocks/sec exceed the threshold, de-escalates at ¼ of it. 30s cool-down between level changes.</p>
+        <label class="tog"><span>Enable auto-UAM</span><input id="auto-uam-on" type="checkbox"><span class="switch"></span></label>
+        <label class="form-label">Escalate threshold (blocks per second)</label>
+        <div class="form-row">
+          <input id="auto-uam-threshold" type="number" min="1" max="10000">
+          <button class="cli-btn" data-save="auto-uam">Save</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3 class="card-title">Challenge mode</h3></div>
+        <p class="mut">How freshly-arriving visitors are vetted when UAM is engaged or the score crosses the challenge threshold.</p>
+        <div class="seg" id="challenge-mode-seg">
+          <button class="seg-btn" data-cm="0">PoW</button>
+          <button class="seg-btn" data-cm="1">Interactive</button>
+          <button class="seg-btn" data-cm="2">Combined</button>
+        </div>
+        <div class="mut" style="margin-top:10px; font-size:11px;">
+          PoW = browser solves a SHA-256 proof. Interactive = checkbox + behavioural signal. Combined = both.
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3 class="card-title">Heuristic defenses</h3><span class="card-meta mut">ddos-tuned signal pipeline</span></div>
+      <div class="toggles" id="defense-toggles"></div>
+      <p class="mut" style="margin-top:14px; font-size:11.5px;">
+        <b>Bot score</b> — header completeness, UA / sec-ch-ua consistency, modern browser fingerprints.
+        <b>Behavior</b> — per-IP URL diversity, inter-arrival regularity, method bias, UA churn.
+        <b>DDoS patterns</b> — GET-with-body, empty Connection, CORS-less OPTIONS, cache-buster spam, NUL bytes, query bloat.
+      </p>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head"><h3 class="card-title">Top attacker IPs</h3><span class="card-meta mut">live</span></div>
+        <div class="rows" id="top-attackers"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3 class="card-title">Block ratio · last 60s</h3></div>
+        <div class="ratio">
+          <div class="ratio-num" id="block-ratio">—</div>
+          <div class="ratio-sub mut">of all decisions in the ring buffer</div>
+        </div>
+        <canvas id="defense-spark" height="80"></canvas>
+      </div>
     </div>
   </section>
 

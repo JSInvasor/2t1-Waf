@@ -58,7 +58,14 @@ $("#logout").addEventListener("click", e => {
 });
 
 // ============== routing ==============
-const routes = ["overview", "firewall", "traffic", "settings"];
+const routes = ["overview", "defense", "firewall", "traffic", "settings"];
+
+const UAM_NAMES = ["Off", "Low", "Medium", "High", "Extreme"];
+const DEFENSE_KEYS = [
+  ["bot_score", "Bot score (header / UA fingerprint)"],
+  ["behavior",  "Behavior (per-IP entropy / regularity)"],
+  ["ddos",      "DDoS patterns (anomalous requests)"],
+];
 function navigate() {
   const hash = location.hash.replace("#/", "") || "overview";
   const route = routes.includes(hash) ? hash : "overview";
@@ -192,6 +199,80 @@ function apply(data) {
 
   // dstat
   updateDstat(m, data.in_flight_total || 0);
+
+  // defense
+  applyDefense(rt, m);
+}
+
+function applyDefense(rt, m) {
+  const lvl = rt.uam_level ?? 0;
+  $("#uam-current").textContent = "level " + lvl + " · " + (UAM_NAMES[lvl] || "?");
+  $$(".uam-lvl").forEach(b => b.dataset.active = (parseInt(b.dataset.uam,10) === lvl) ? "1" : "0");
+
+  const cm = rt.challenge_mode ?? 0;
+  $$("#challenge-mode-seg .seg-btn").forEach(b =>
+    b.dataset.active = (parseInt(b.dataset.cm,10) === cm) ? "1" : "0");
+
+  $("#auto-uam-on").checked = !!rt.auto_uam_enabled;
+  $("#auto-uam-threshold").value = rt.auto_uam_threshold ?? "";
+
+  // defense toggles
+  const dEl = $("#defense-toggles");
+  if (dEl && !dEl.dataset.rendered) {
+    dEl.innerHTML = DEFENSE_KEYS.map(([k, label]) => `
+      <label class="tog">
+        <span>${label}</span>
+        <input type="checkbox" data-defense="${k}">
+        <span class="switch"></span>
+      </label>
+    `).join("");
+    dEl.dataset.rendered = "1";
+  }
+  const ds = rt.defenses || {};
+  $$("[data-defense]").forEach(inp => inp.checked = !!ds[inp.dataset.defense]);
+
+  // top attackers — same as top IPs for now (block-weighted)
+  const topAtk = m.top_ips ? m.top_ips.slice(0, 10) : [];
+  renderRows($("#top-attackers"), topAtk);
+
+  // block ratio over the ring
+  const ring = m.ring || [];
+  const sum = ring.reduce((a, b) => ({
+    a: a.a + (b.allowed||0),
+    c: a.c + (b.challenged||0),
+    b: a.b + (b.blocked||0),
+  }), {a:0,c:0,b:0});
+  const total = sum.a + sum.c + sum.b;
+  const pct = total ? Math.round((sum.b / total) * 100) : 0;
+  $("#block-ratio").textContent = pct + "%";
+  drawDefenseSpark(ring);
+}
+
+function drawDefenseSpark(buckets) {
+  const c = $("#defense-spark");
+  if (!c) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = c.clientWidth, h = c.clientHeight || 80;
+  c.width = w * dpr; c.height = h * dpr;
+  const ctx = c.getContext("2d"); ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, w, h);
+  // Show block ratio per bucket as a sparkline.
+  const pts = buckets.map(b => {
+    const t = (b.allowed||0) + (b.challenged||0) + (b.blocked||0);
+    return t ? (b.blocked||0) / t : 0;
+  });
+  const bw = w / Math.max(pts.length, 1);
+  ctx.strokeStyle = "#b3203a"; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  pts.forEach((v, i) => {
+    const x = i * bw + bw/2;
+    const y = h - v * h;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  // baseline
+  ctx.strokeStyle = "rgba(17,17,17,0.08)"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, h - 0.5); ctx.lineTo(w, h - 0.5); ctx.stroke();
 }
 
 // ============ dstat ============
@@ -327,6 +408,9 @@ document.addEventListener("change", async e => {
   if (e.target.matches("[data-rule]")) {
     await patchRuntime({ rules: { [e.target.dataset.rule]: e.target.checked } });
   }
+  if (e.target.matches("[data-defense]")) {
+    await patchRuntime({ defenses: { [e.target.dataset.defense]: e.target.checked } });
+  }
   if (e.target.id === "under-attack") {
     await fetch("/api/under_attack?on=" + e.target.checked, {
       method: "POST", headers: { authorization: "Bearer " + token },
@@ -335,9 +419,39 @@ document.addEventListener("change", async e => {
           e.target.checked ? "bad" : "ok");
     refreshState();
   }
+  if (e.target.id === "auto-uam-on") {
+    await patchRuntime({ auto_uam_enabled: e.target.checked });
+    toast(e.target.checked ? "Auto-UAM watching" : "Auto-UAM off");
+  }
 });
 
 document.addEventListener("click", async e => {
+  // UAM level buttons
+  const uamBtn = e.target.closest("[data-uam]");
+  if (uamBtn) {
+    const lvl = parseInt(uamBtn.dataset.uam, 10);
+    const r = await api("/api/uam?level=" + lvl, { method: "POST" });
+    if (r.ok) { toast("UAM " + UAM_NAMES[lvl]); refreshState(); }
+    return;
+  }
+  // PANIC button
+  if (e.target.id === "panic-btn") {
+    const r = await api("/api/uam?panic=true", { method: "POST" });
+    if (r.ok) { toast("⚠ PANIC engaged · UAM Extreme", "bad"); refreshState(); }
+    return;
+  }
+  // Challenge mode segment
+  const cmBtn = e.target.closest("[data-cm]");
+  if (cmBtn) {
+    const cm = parseInt(cmBtn.dataset.cm, 10);
+    await patchRuntime({ challenge_mode: cm });
+    return;
+  }
+  // Auto-UAM threshold save
+  if (e.target.matches('[data-save="auto-uam"]')) {
+    await patchRuntime({ auto_uam_threshold: parseInt($("#auto-uam-threshold").value, 10) });
+    return;
+  }
   if (e.target.matches('[data-save="thresholds"]')) {
     await patchRuntime({
       challenge_threshold: parseInt($("#threshold-challenge").value, 10),

@@ -76,6 +76,11 @@ fn main() -> anyhow::Result<()> {
 
     // Local admin / metrics service for the dashboard.
     server.add_service(admin::admin_service(engine.clone(), admin_listen.clone()));
+
+    // Auto-UAM watchdog: monitors block rate and escalates / de-escalates the
+    // UAM level on its own when enabled.
+    server.add_service(admin::auto_uam_service(engine.clone()));
+
     tracing::info!(%admin_listen, token = %engine.runtime.auth_token.read(), "admin token (use as Bearer)");
 
     tracing::info!(threads, "2t1-waf running");

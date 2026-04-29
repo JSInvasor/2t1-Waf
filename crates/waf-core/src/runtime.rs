@@ -10,25 +10,28 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
 #[derive(Debug)]
 pub struct Runtime {
     pub under_attack: AtomicBool,
+    /// 0=off, 1=low, 2=medium, 3=high, 4=extreme. See `UamLevel`.
+    pub uam_level: AtomicU8,
+    /// 0=pow, 1=interactive, 2=combined.
+    pub challenge_mode: AtomicU8,
+    pub auto_uam_enabled: AtomicBool,
+    /// Block rate (per second) above which auto-UAM escalates one level.
+    pub auto_uam_threshold: AtomicU32,
     pub challenge_threshold: AtomicU32,
     pub block_threshold: AtomicU32,
-    /// Per-IP concurrent connection cap; 0 disables.
     pub max_concurrent_per_ip: AtomicU32,
-    /// Multiplier (basis points) applied to global RPM when under attack.
-    /// 5000 = 50% of configured RPM.
     pub rpm_under_attack_bps: AtomicU32,
 
     pub rules: RuleToggles,
+    pub defenses: DefenseToggles,
 
-    /// Hot-swappable IP lists. CIDR format, parsed at write time.
     pub allow: RwLock<Vec<IpNet>>,
     pub deny: RwLock<Vec<IpNet>>,
-    /// ISO 3166-1 alpha-2 codes blocked at runtime.
     pub blocked_countries: RwLock<Vec<String>>,
 
     pub auth_token: RwLock<String>,
@@ -47,9 +50,44 @@ pub struct RuleToggles {
     pub rate_limit: AtomicBool,
 }
 
+#[derive(Debug)]
+pub struct DefenseToggles {
+    pub bot_score: AtomicBool,
+    pub behavior:  AtomicBool,
+    pub ddos:      AtomicBool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum UamLevel {
+    Off     = 0,
+    Low     = 1,
+    Medium  = 2,
+    High    = 3,
+    Extreme = 4,
+}
+impl UamLevel {
+    pub fn from_u8(n: u8) -> Self {
+        match n { 1 => Self::Low, 2 => Self::Medium, 3 => Self::High, 4 => Self::Extreme, _ => Self::Off }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ChallengeMode { Pow = 0, Interactive = 1, Combined = 2 }
+impl ChallengeMode {
+    pub fn from_u8(n: u8) -> Self {
+        match n { 1 => Self::Interactive, 2 => Self::Combined, _ => Self::Pow }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct PersistedRuntime {
     #[serde(default)] pub under_attack: bool,
+    #[serde(default)] pub uam_level: Option<u8>,
+    #[serde(default)] pub challenge_mode: Option<u8>,
+    #[serde(default)] pub auto_uam_enabled: Option<bool>,
+    #[serde(default)] pub auto_uam_threshold: Option<u32>,
     #[serde(default)] pub challenge_threshold: Option<u32>,
     #[serde(default)] pub block_threshold: Option<u32>,
     #[serde(default)] pub max_concurrent_per_ip: Option<u32>,
@@ -58,6 +96,7 @@ pub struct PersistedRuntime {
     #[serde(default)] pub deny: Vec<String>,
     #[serde(default)] pub blocked_countries: Vec<String>,
     #[serde(default)] pub rules: PersistedToggles,
+    #[serde(default)] pub defenses: PersistedDefenses,
     #[serde(default)] pub auth_token: Option<String>,
 }
 
@@ -72,14 +111,25 @@ pub struct PersistedToggles {
     #[serde(default)] pub rate_limit: Option<bool>,
 }
 
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct PersistedDefenses {
+    #[serde(default)] pub bot_score: Option<bool>,
+    #[serde(default)] pub behavior:  Option<bool>,
+    #[serde(default)] pub ddos:      Option<bool>,
+}
+
 impl Runtime {
     pub fn from_config(cfg: &crate::Config) -> Self {
         Self {
             under_attack: AtomicBool::new(false),
+            uam_level: AtomicU8::new(0),
+            challenge_mode: AtomicU8::new(0),
+            auto_uam_enabled: AtomicBool::new(false),
+            auto_uam_threshold: AtomicU32::new(50), // blocks/sec
             challenge_threshold: AtomicU32::new(cfg.detection.challenge_threshold),
             block_threshold: AtomicU32::new(cfg.detection.block_threshold),
             max_concurrent_per_ip: AtomicU32::new(200),
-            rpm_under_attack_bps: AtomicU32::new(2000), // 20% of normal
+            rpm_under_attack_bps: AtomicU32::new(2000),
             rules: RuleToggles {
                 sqli: AtomicBool::new(cfg.detection.sqli),
                 xss: AtomicBool::new(cfg.detection.xss),
@@ -89,12 +139,22 @@ impl Runtime {
                 bot_ua: AtomicBool::new(true),
                 rate_limit: AtomicBool::new(cfg.rate_limit.enabled),
             },
+            defenses: DefenseToggles {
+                bot_score: AtomicBool::new(true),
+                behavior:  AtomicBool::new(true),
+                ddos:      AtomicBool::new(true),
+            },
             allow: RwLock::new(Vec::new()),
             deny: RwLock::new(Vec::new()),
             blocked_countries: RwLock::new(cfg.geoip.block_countries.clone()),
             auth_token: RwLock::new(generate_token()),
             persist_path: RwLock::new(None),
         }
+    }
+
+    pub fn uam(&self) -> UamLevel { UamLevel::from_u8(self.uam_level.load(Ordering::Relaxed)) }
+    pub fn challenge_mode_v(&self) -> ChallengeMode {
+        ChallengeMode::from_u8(self.challenge_mode.load(Ordering::Relaxed))
     }
 
     /// Set the file used to persist runtime state and load any existing data.
@@ -111,6 +171,10 @@ impl Runtime {
 
     pub fn apply_persisted(&self, p: PersistedRuntime) -> anyhow::Result<()> {
         self.under_attack.store(p.under_attack, Ordering::Relaxed);
+        if let Some(v) = p.uam_level          { self.uam_level.store(v.min(4), Ordering::Relaxed); }
+        if let Some(v) = p.challenge_mode     { self.challenge_mode.store(v.min(2), Ordering::Relaxed); }
+        if let Some(v) = p.auto_uam_enabled   { self.auto_uam_enabled.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.auto_uam_threshold { self.auto_uam_threshold.store(v, Ordering::Relaxed); }
         if let Some(v) = p.challenge_threshold { self.challenge_threshold.store(v, Ordering::Relaxed); }
         if let Some(v) = p.block_threshold     { self.block_threshold.store(v, Ordering::Relaxed); }
         if let Some(v) = p.max_concurrent_per_ip { self.max_concurrent_per_ip.store(v, Ordering::Relaxed); }
@@ -122,6 +186,9 @@ impl Runtime {
         if let Some(v) = p.rules.lfi       { self.rules.lfi.store(v, Ordering::Relaxed); }
         if let Some(v) = p.rules.bot_ua    { self.rules.bot_ua.store(v, Ordering::Relaxed); }
         if let Some(v) = p.rules.rate_limit{ self.rules.rate_limit.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.defenses.bot_score { self.defenses.bot_score.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.defenses.behavior  { self.defenses.behavior.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.defenses.ddos      { self.defenses.ddos.store(v, Ordering::Relaxed); }
 
         let allow: Vec<IpNet> = p.allow.iter().filter_map(|s| parse_net(s).ok()).collect();
         let deny:  Vec<IpNet> = p.deny.iter().filter_map(|s| parse_net(s).ok()).collect();
@@ -137,6 +204,10 @@ impl Runtime {
     pub fn snapshot(&self) -> PersistedRuntime {
         PersistedRuntime {
             under_attack: self.under_attack.load(Ordering::Relaxed),
+            uam_level: Some(self.uam_level.load(Ordering::Relaxed)),
+            challenge_mode: Some(self.challenge_mode.load(Ordering::Relaxed)),
+            auto_uam_enabled: Some(self.auto_uam_enabled.load(Ordering::Relaxed)),
+            auto_uam_threshold: Some(self.auto_uam_threshold.load(Ordering::Relaxed)),
             challenge_threshold: Some(self.challenge_threshold.load(Ordering::Relaxed)),
             block_threshold: Some(self.block_threshold.load(Ordering::Relaxed)),
             max_concurrent_per_ip: Some(self.max_concurrent_per_ip.load(Ordering::Relaxed)),
@@ -152,6 +223,11 @@ impl Runtime {
                 lfi: Some(self.rules.lfi.load(Ordering::Relaxed)),
                 bot_ua: Some(self.rules.bot_ua.load(Ordering::Relaxed)),
                 rate_limit: Some(self.rules.rate_limit.load(Ordering::Relaxed)),
+            },
+            defenses: PersistedDefenses {
+                bot_score: Some(self.defenses.bot_score.load(Ordering::Relaxed)),
+                behavior:  Some(self.defenses.behavior.load(Ordering::Relaxed)),
+                ddos:      Some(self.defenses.ddos.load(Ordering::Relaxed)),
             },
             auth_token: Some(self.auth_token.read().clone()),
         }

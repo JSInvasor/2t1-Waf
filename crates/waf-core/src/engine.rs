@@ -3,9 +3,12 @@
 //! score crosses the block threshold so a clearly malicious request does the
 //! minimum work.
 
+use crate::behavior::BehaviorTracker;
+use crate::bot_score;
 use crate::challenge::Challenger;
 use crate::config::Config;
 use crate::connections::ConnTracker;
+use crate::ddos;
 use crate::decision::{Decision, DecisionReason};
 use crate::events::EventLog;
 use crate::metrics::Metrics;
@@ -13,7 +16,7 @@ use crate::ratelimit::RateLimiter;
 use crate::reputation::{Reputation, Reputations};
 use crate::request::RequestCtx;
 use crate::rules::{self, Surface};
-use crate::runtime::Runtime;
+use crate::runtime::{Runtime, UamLevel};
 use crate::score::*;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -28,6 +31,22 @@ pub struct Engine {
     pub runtime: Arc<Runtime>,
     pub events: Arc<EventLog>,
     pub conns: Arc<ConnTracker>,
+    pub behavior: Arc<BehaviorTracker>,
+}
+
+/// Per-UAM level scaling. Returned by `Engine::uam_params`.
+#[derive(Debug, Clone, Copy)]
+pub struct UamParams {
+    /// Force every fresh request through the JS challenge.
+    pub force_challenge: bool,
+    /// Multiply rate-limit RPM ceiling by this basis-points value.
+    pub rpm_scale_bps: u32,
+    /// Subtract this from the challenge threshold (lower = more challenges).
+    pub challenge_drop: u32,
+    /// Subtract this from the block threshold.
+    pub block_drop: u32,
+    /// Lower the per-IP concurrent cap by this (0 = leave alone).
+    pub conn_cap_clamp: u32,
 }
 
 impl Engine {
@@ -52,11 +71,34 @@ impl Engine {
             runtime,
             events: Arc::new(EventLog::default()),
             conns: Arc::new(ConnTracker::default()),
+            behavior: Arc::new(BehaviorTracker::default()),
         }))
+    }
+
+    /// Translate the runtime UAM level into engine-side scaling parameters.
+    pub fn uam_params(&self) -> UamParams {
+        // Legacy `under_attack` flag forces medium if level is still 0.
+        let mut lvl = self.runtime.uam();
+        if matches!(lvl, UamLevel::Off) && self.runtime.under_attack.load(Ordering::Relaxed) {
+            lvl = UamLevel::Medium;
+        }
+        match lvl {
+            UamLevel::Off     => UamParams { force_challenge: false, rpm_scale_bps: 10_000,
+                challenge_drop: 0,  block_drop: 0,  conn_cap_clamp: 0 },
+            UamLevel::Low     => UamParams { force_challenge: false, rpm_scale_bps:  7_500,
+                challenge_drop: 5,  block_drop: 5,  conn_cap_clamp: 0 },
+            UamLevel::Medium  => UamParams { force_challenge: true,  rpm_scale_bps:  5_000,
+                challenge_drop: 10, block_drop: 10, conn_cap_clamp: 0 },
+            UamLevel::High    => UamParams { force_challenge: true,  rpm_scale_bps:  2_500,
+                challenge_drop: 15, block_drop: 15, conn_cap_clamp: 50 },
+            UamLevel::Extreme => UamParams { force_challenge: true,  rpm_scale_bps:  1_000,
+                challenge_drop: 20, block_drop: 20, conn_cap_clamp: 25 },
+        }
     }
 
     pub fn evaluate(&self, ctx: &RequestCtx) -> Decision {
         let req_id = ctx.request_id.clone();
+        let uam = self.uam_params();
 
         // 1. Clearance cookie short-circuits everything except the always-on
         //    deny-list / connection-cap / rate-limit checks.
@@ -96,9 +138,12 @@ impl Engine {
             return self.finalize(ctx, Decision::block(req_id, 403, r));
         }
 
-        // 3. Per-IP concurrent request cap.
+        // 3. Per-IP concurrent request cap (UAM clamps this further).
         let in_flight = self.conns.current(ip);
-        let cap = self.runtime.max_concurrent_per_ip.load(Ordering::Relaxed) as i64;
+        let mut cap = self.runtime.max_concurrent_per_ip.load(Ordering::Relaxed) as i64;
+        if uam.conn_cap_clamp > 0 {
+            cap = cap.min(uam.conn_cap_clamp as i64);
+        }
         if cap > 0 && in_flight > cap {
             let r = DecisionReason {
                 rule_id: "CONN-CAP", category: "ddos",
@@ -114,10 +159,13 @@ impl Engine {
             return self.finalize(ctx, d);
         }
 
-        // 5. Rate limit (with adaptive scaling under attack).
-        let under_attack = self.runtime.under_attack.load(Ordering::Relaxed);
+        // 5. Rate limit (UAM tightens the ceiling adaptively).
         if self.runtime.rules.rate_limit.load(Ordering::Relaxed) {
-            let scale_bps = if under_attack {
+            // The legacy `under_attack` toggle keeps using `rpm_under_attack_bps`;
+            // UAM levels above Off override it with their own scale.
+            let scale_bps = if uam.rpm_scale_bps < 10_000 {
+                uam.rpm_scale_bps
+            } else if self.runtime.under_attack.load(Ordering::Relaxed) {
                 self.runtime.rpm_under_attack_bps.load(Ordering::Relaxed)
             } else { 10_000 };
             if let Err(l) = self.rate_limiter.check_scaled(&ctx.client_ip.to_string(), &ctx.path, scale_bps) {
@@ -136,13 +184,13 @@ impl Engine {
             return self.finalize(ctx, Decision::allow(req_id));
         }
 
-        // 6. "Under attack" forces every fresh visitor through the challenge.
-        if under_attack {
+        // 6. UAM force-challenge for fresh visitors (Medium and up).
+        if uam.force_challenge {
             self.metrics.challenged.fetch_add(1, Ordering::Relaxed);
             let r = DecisionReason {
-                rule_id: "UA-MODE", category: "anti_ddos",
+                rule_id: "UAM-FORCE", category: "anti_ddos",
                 score: 100,
-                detail: "under attack mode forcing challenge".into(),
+                detail: format!("uam={:?} forcing challenge", self.runtime.uam()),
             };
             return self.finalize(ctx, Decision::challenge(req_id, 100, vec![r]));
         }
@@ -152,6 +200,23 @@ impl Engine {
 
         if let Some(r) = self.geoip_reason(ctx) { decision.add_reason(r); }
         for r in self.header_reasons(ctx)      { decision.add_reason(r); }
+
+        // Browser/bot heuristics (header completeness, UA consistency).
+        if self.runtime.defenses.bot_score.load(Ordering::Relaxed) {
+            for r in bot_score::score(ctx) { decision.add_reason(r); }
+        }
+
+        // Per-IP behaviour fingerprint (URL diversity, interval regularity, …).
+        if self.runtime.defenses.behavior.load(Ordering::Relaxed) {
+            for r in self.behavior.observe(ctx.client_ip, &ctx.path, &ctx.method, &ctx.user_agent) {
+                decision.add_reason(r);
+            }
+        }
+
+        // DDoS-flavoured request anomalies.
+        if self.runtime.defenses.ddos.load(Ordering::Relaxed) {
+            for r in ddos::score(ctx) { decision.add_reason(r); }
+        }
 
         if self.runtime.rules.bot_ua.load(Ordering::Relaxed)
             && !ctx.user_agent.is_empty()
@@ -191,9 +256,11 @@ impl Engine {
             }
         }
 
-        // 8. Threshold decision.
-        let block_t = self.runtime.block_threshold.load(Ordering::Relaxed);
-        let chal_t  = self.runtime.challenge_threshold.load(Ordering::Relaxed);
+        // 8. Threshold decision (UAM lowers both thresholds adaptively).
+        let block_t = self.runtime.block_threshold.load(Ordering::Relaxed)
+            .saturating_sub(uam.block_drop);
+        let chal_t  = self.runtime.challenge_threshold.load(Ordering::Relaxed)
+            .saturating_sub(uam.challenge_drop);
         if decision.score >= block_t {
             let primary = decision.reasons.first().cloned().unwrap_or(DecisionReason {
                 rule_id: "ANOMALY", category: "anomaly",
@@ -394,31 +461,50 @@ hmac_secret = "a-very-secret-key-of-some-length"
         }
     }
 
+    fn quiet_engine() -> std::sync::Arc<Engine> {
+        // Disable the heuristic defenses for tests that exercise just the
+        // routing / threshold logic. Each defense module has its own tests.
+        let e = Engine::build(cfg()).unwrap();
+        e.runtime.defenses.bot_score.store(false, Ordering::Relaxed);
+        e.runtime.defenses.behavior.store(false,  Ordering::Relaxed);
+        e.runtime.defenses.ddos.store(false,      Ordering::Relaxed);
+        e
+    }
+
     #[test]
     fn benign_passes() {
-        let e = Engine::build(cfg()).unwrap();
+        let e = quiet_engine();
         let d = e.evaluate(&req("/x", ""));
         assert_eq!(d.action, Action::Allow);
     }
 
     #[test]
     fn sqli_blocks() {
-        let e = Engine::build(cfg()).unwrap();
+        let e = quiet_engine();
         let d = e.evaluate(&req("/x?id=1' OR 1=1--", "id=1' OR 1=1--"));
         assert_eq!(d.action, Action::Block);
     }
 
     #[test]
     fn under_attack_forces_challenge() {
-        let e = Engine::build(cfg()).unwrap();
+        let e = quiet_engine();
         e.runtime.under_attack.store(true, Ordering::Relaxed);
         let d = e.evaluate(&req("/x", ""));
         assert_eq!(d.action, Action::Challenge);
     }
 
     #[test]
+    fn uam_medium_forces_challenge() {
+        let e = quiet_engine();
+        e.runtime.uam_level.store(2, Ordering::Relaxed);
+        let d = e.evaluate(&req("/x", ""));
+        assert_eq!(d.action, Action::Challenge);
+        assert_eq!(d.reasons.first().map(|r| r.rule_id), Some("UAM-FORCE"));
+    }
+
+    #[test]
     fn runtime_deny_blocks() {
-        let e = Engine::build(cfg()).unwrap();
+        let e = quiet_engine();
         e.runtime.add_deny("1.2.3.4").unwrap();
         let d = e.evaluate(&req("/x", ""));
         assert_eq!(d.action, Action::Block);
@@ -426,7 +512,7 @@ hmac_secret = "a-very-secret-key-of-some-length"
 
     #[test]
     fn runtime_allow_overrides_rule() {
-        let e = Engine::build(cfg()).unwrap();
+        let e = quiet_engine();
         e.runtime.add_allow("1.2.3.4").unwrap();
         let d = e.evaluate(&req("/x?id=1' OR 1=1--", "id=1' OR 1=1--"));
         assert_eq!(d.action, Action::Allow);

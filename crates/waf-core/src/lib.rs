@@ -4,8 +4,11 @@
 //! here depends on Pingora so the rules can be reused, fuzzed, and unit tested
 //! in isolation.
 
+pub mod behavior;
+pub mod bot_score;
 pub mod config;
 pub mod connections;
+pub mod ddos;
 pub mod decision;
 pub mod events;
 pub mod ratelimit;
