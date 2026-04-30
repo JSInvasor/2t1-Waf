@@ -27,3 +27,4 @@ http = { workspace = true }
 bytes = { workspace = true }
 rusqlite = { version = "0.31", features = ["bundled"] }
 tokio = { workspace = true }
+dns-lookup = "2"

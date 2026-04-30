@@ -255,7 +255,7 @@
     </div>
 
     <div class="card">
-      <div class="card-head"><h3 class="card-title">Heuristic defenses</h3><span class="card-meta mut">7 layers · all hot-toggleable</span></div>
+      <div class="card-head"><h3 class="card-title">Heuristic defenses</h3><span class="card-meta mut">8 layers · all hot-toggleable</span></div>
       <div class="toggles" id="defense-toggles"></div>
       <p class="mut" style="margin-top:14px; font-size:11px; line-height:1.7;">
         <b>Bot score</b> — header completeness, UA / sec-ch-ua consistency, modern browser fingerprints.<br>
@@ -264,8 +264,14 @@
         <b>Honeypots</b> — instant ban on requests to <code>/.env</code>, <code>/wp-config.php</code>, scanner trap paths.<br>
         <b>Subnet</b> — /24 (IPv4) and /64 (IPv6) rate &amp; in-flight ceiling, catches botnets sharing a subnet.<br>
         <b>Replay</b> — same (method+path+UA) hash hammered 25× from one IP in 30s.<br>
-        <b>Distributed UA</b> — single User-Agent observed from 8+ distinct IPs in 60s (botnet signature).
+        <b>Distributed UA</b> — single User-Agent observed from 8+ distinct IPs in 60s (botnet signature).<br>
+        <b>Good-bot whitelist</b> — Googlebot / Bingbot / Yandex / Baidu / Apple / Meta / LinkedIn / Twitter / Discord / DuckDuckGo with reverse-DNS verification. Spoofers add +60 score; first-hit pending bots get a lenient pass.
       </p>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3 class="card-title">Verified good bots · live</h3><span class="card-meta mut">cached PTR results · <span id="goodbot-count">0</span></span></div>
+      <div class="rows" id="goodbot-rows"></div>
     </div>
 
     <div class="grid-2">

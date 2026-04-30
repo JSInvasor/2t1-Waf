@@ -363,6 +363,9 @@ fn route_api(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
             };
             ok_json(serde_json::to_vec(&evs).unwrap_or_default())
         }
+        ("GET", "/api/goodbots") => {
+            ok_json(serde_json::to_vec(&engine.goodbot.snapshot()).unwrap_or_default())
+        }
         ("GET", "/api/banned") => {
             let banned: Vec<serde_json::Value> = engine.reputations.banned().into_iter()
                 .map(|(ip, ttl)| serde_json::json!({"ip": ip.to_string(), "expires_in": ttl}))
@@ -410,6 +413,7 @@ fn route_api(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
                 #[serde(default)] subnet:    Option<bool>,
                 #[serde(default)] replay:    Option<bool>,
                 #[serde(default)] dist_ua:   Option<bool>,
+                #[serde(default)] goodbot:   Option<bool>,
             }
             let patch: Patch = match serde_json::from_slice(&req.body) {
                 Ok(p) => p,
@@ -443,6 +447,7 @@ fn route_api(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
                 if let Some(v) = dp.subnet    { r.defenses.subnet.store(v, Ordering::Relaxed); }
                 if let Some(v) = dp.replay    { r.defenses.replay.store(v, Ordering::Relaxed); }
                 if let Some(v) = dp.dist_ua   { r.defenses.dist_ua.store(v, Ordering::Relaxed); }
+                if let Some(v) = dp.goodbot   { r.defenses.goodbot.store(v, Ordering::Relaxed); }
             }
             if let Some(v) = patch.subnet_rpm  { r.subnet_rpm.store(v, Ordering::Relaxed); }
             if let Some(v) = patch.subnet_conn { r.subnet_conn.store(v, Ordering::Relaxed); }

@@ -75,6 +75,8 @@ pub struct DefenseToggles {
     pub subnet:    AtomicBool,
     pub replay:    AtomicBool,
     pub dist_ua:   AtomicBool,
+    /// Reverse-DNS verified good-bot whitelist (Googlebot, Bingbot, …).
+    pub goodbot:   AtomicBool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +148,7 @@ pub struct PersistedDefenses {
     #[serde(default)] pub subnet:    Option<bool>,
     #[serde(default)] pub replay:    Option<bool>,
     #[serde(default)] pub dist_ua:   Option<bool>,
+    #[serde(default)] pub goodbot:   Option<bool>,
 }
 
 impl Runtime {
@@ -177,6 +180,7 @@ impl Runtime {
                 subnet:    AtomicBool::new(true),
                 replay:    AtomicBool::new(true),
                 dist_ua:   AtomicBool::new(true),
+                goodbot:   AtomicBool::new(true),
             },
             subnet_rpm:  AtomicU32::new(2400),
             subnet_conn: AtomicU32::new(800),
@@ -232,6 +236,7 @@ impl Runtime {
         if let Some(v) = p.defenses.subnet    { self.defenses.subnet.store(v, Ordering::Relaxed); }
         if let Some(v) = p.defenses.replay    { self.defenses.replay.store(v, Ordering::Relaxed); }
         if let Some(v) = p.defenses.dist_ua   { self.defenses.dist_ua.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.defenses.goodbot   { self.defenses.goodbot.store(v, Ordering::Relaxed); }
         if let Some(v) = p.subnet_rpm  { self.subnet_rpm.store(v, Ordering::Relaxed); }
         if let Some(v) = p.subnet_conn { self.subnet_conn.store(v, Ordering::Relaxed); }
         if let Some(v) = p.global_inflight_cap { self.global_inflight_cap.store(v, Ordering::Relaxed); }
@@ -280,6 +285,7 @@ impl Runtime {
                 subnet:    Some(self.defenses.subnet.load(Ordering::Relaxed)),
                 replay:    Some(self.defenses.replay.load(Ordering::Relaxed)),
                 dist_ua:   Some(self.defenses.dist_ua.load(Ordering::Relaxed)),
+                goodbot:   Some(self.defenses.goodbot.load(Ordering::Relaxed)),
             },
             subnet_rpm:  Some(self.subnet_rpm.load(Ordering::Relaxed)),
             subnet_conn: Some(self.subnet_conn.load(Ordering::Relaxed)),

@@ -12,6 +12,7 @@ use crate::datacenter;
 use crate::ddos;
 use crate::decision::{Action, Decision, DecisionReason};
 use crate::events::EventLog;
+use crate::goodbot::{GoodBotVerifier, Verdict};
 use crate::honeypots::Honeypots;
 use crate::metrics::Metrics;
 use crate::ratelimit::RateLimiter;
@@ -42,6 +43,7 @@ pub struct Engine {
     pub honeypots: Arc<Honeypots>,
     pub replay:   Arc<RequestReplay>,
     pub dist_ua:  Arc<DistributedUa>,
+    pub goodbot:  Arc<GoodBotVerifier>,
     /// Optional persistent event sink. None = in-memory ring only.
     pub storage_sink: RwLock<Option<Sink>>,
     pub storage_path: RwLock<Option<std::path::PathBuf>>,
@@ -91,6 +93,7 @@ impl Engine {
             honeypots: Arc::new(Honeypots::default()),
             replay:   Arc::new(RequestReplay::default()),
             dist_ua:  Arc::new(DistributedUa::default()),
+            goodbot:  Arc::new(GoodBotVerifier::default()),
             storage_sink: RwLock::new(None),
             storage_path: RwLock::new(None),
         }))
@@ -187,6 +190,27 @@ impl Engine {
             return self.finalize(ctx, Decision::block(req_id, 403, r));
         }
 
+        // 2.4 Verified good-bot whitelist. Real Googlebot / Bingbot etc.
+        // bypass everything; UA spoofers get a heavy +score that rides
+        // them into challenge / block territory naturally. Pending bots
+        // (UA matches but reverse-DNS lookup is in flight) get a lenient
+        // pass — bot_score is skipped for that one request so SEO doesn't
+        // break on the very first hit.
+        let mut goodbot_pending = false;
+        let mut goodbot_spoof: Option<DecisionReason> = None;
+        if self.runtime.defenses.goodbot.load(Ordering::Relaxed) {
+            match self.goodbot.classify(ip, &ctx.user_agent) {
+                Verdict::GoodBotVerified(_) => {
+                    return self.finalize(ctx, Decision::allow(req_id));
+                }
+                Verdict::GoodBotSpoofed(name) => {
+                    goodbot_spoof = Some(crate::goodbot::spoof_reason(name));
+                }
+                Verdict::GoodBotPending  => goodbot_pending = true,
+                Verdict::NotABot         => {}
+            }
+        }
+
         // 2.5 Honeypot trip — any request to a trap path is malicious by
         //     definition. Force-ban immediately and short-circuit.
         if self.runtime.defenses.honeypots.load(Ordering::Relaxed) {
@@ -256,11 +280,18 @@ impl Engine {
         // 7. Scoring signals.
         let mut decision = Decision::allow(req_id.clone());
 
+        // Apply the goodbot spoof score before any other signal so the
+        // dashboard's "primary reason" surfaces the spoof clearly.
+        if let Some(r) = goodbot_spoof.take() { decision.add_reason(r); }
+
         if let Some(r) = self.geoip_reason(ctx) { decision.add_reason(r); }
         for r in self.header_reasons(ctx)      { decision.add_reason(r); }
 
         // Browser/bot heuristics (header completeness, UA consistency).
-        if self.runtime.defenses.bot_score.load(Ordering::Relaxed) {
+        // Skipped while a good-bot verification is in flight so the very
+        // first request from an SEO crawler isn't bounced through the
+        // challenge before its PTR record is checked.
+        if !goodbot_pending && self.runtime.defenses.bot_score.load(Ordering::Relaxed) {
             for r in bot_score::score(ctx) { decision.add_reason(r); }
         }
 

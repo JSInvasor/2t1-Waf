@@ -76,6 +76,7 @@ const DEFENSE_KEYS = [
   ["subnet",    "Subnet ceilings (/24 + /64)"],
   ["replay",    "Request replay flood"],
   ["dist_ua",   "Distributed UA (botnet signature)"],
+  ["goodbot",   "Good-bot whitelist (reverse-DNS verified)"],
 ];
 function navigate() {
   const hash = location.hash.replace("#/", "") || "overview";
@@ -620,12 +621,30 @@ async function patchRuntime(patch) {
 
 async function refreshState() {
   try {
-    const [stateR, bannedR] = await Promise.all([api("/api/state"), api("/api/banned")]);
+    const [stateR, bannedR, gbR] = await Promise.all([
+      api("/api/state"), api("/api/banned"), api("/api/goodbots"),
+    ]);
     if (!stateR.ok || !bannedR.ok) return;
     apply(await stateR.json());
     const banned = await bannedR.json();
     renderListRows($("#banned-rows"),
       banned.map(b => ({ label: b.ip, value: b.expires_in + "s" })), "", "unban");
+    if (gbR.ok) {
+      const gb = await gbR.json();
+      const el = $("#goodbot-rows");
+      if (el) {
+        if (!gb.length) {
+          el.innerHTML = '<div class="row"><span class="v">no SEO bot traffic yet</span></div>';
+        } else {
+          el.innerHTML = gb.map(g => `<div class="row">
+            <span class="name">${escapeHtml(g.ip)}<span class="v" style="margin-left:8px;">${escapeHtml(g.ptr || "—")}</span></span>
+            <span class="v">${escapeHtml(g.state)}</span>
+            <span class="v">${g.ttl}s</span>
+          </div>`).join("");
+        }
+      }
+      $("#goodbot-count") && ($("#goodbot-count").textContent = gb.length);
+    }
   } catch (_) {}
 }
 

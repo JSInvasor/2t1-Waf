@@ -15,6 +15,7 @@ pub mod decision;
 pub mod engine;
 pub mod events;
 pub mod fingerprint;
+pub mod goodbot;
 pub mod honeypots;
 pub mod metrics;
 pub mod ratelimit;
