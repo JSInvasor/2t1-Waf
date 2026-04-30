@@ -249,8 +249,25 @@
           <button class="seg-btn" data-cm="2">Combined</button>
         </div>
         <div class="mut" style="margin-top:10px; font-size:11px;">
-          PoW = browser solves a SHA-256 proof. Interactive = checkbox + behavioural signal. Combined = both.
+          PoW = browser solves a SHA-256 proof. Interactive = real captcha (Turnstile / hCaptcha). Combined = silent BIC + interactive.
         </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3 class="card-title">Captcha provider · Interactive mode</h3><span class="card-meta mut">Cloudflare Turnstile or hCaptcha</span></div>
+      <div class="seg" id="turnstile-provider-seg" style="margin-bottom:14px;">
+        <button class="seg-btn" data-tp="turnstile">Turnstile</button>
+        <button class="seg-btn" data-tp="hcaptcha">hCaptcha</button>
+      </div>
+      <label class="form-label">Site key (public · embedded in challenge HTML)</label>
+      <div class="form-row">
+        <input id="turnstile-site-key" type="text" placeholder="0x4AAA…">
+        <button class="cli-btn" data-save="turnstile">Save</button>
+      </div>
+      <label class="form-label">Secret (server-only · write-once · never returned by /api/state)</label>
+      <div class="form-row">
+        <input id="turnstile-secret" type="password" placeholder="leave blank to keep current">
       </div>
     </div>
 

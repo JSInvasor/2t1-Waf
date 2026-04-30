@@ -28,6 +28,7 @@ pub mod score;
 pub mod signature;
 pub mod storage;
 pub mod subnet;
+pub mod turnstile;
 
 pub use config::Config;
 pub use decision::{Action, Decision, DecisionReason};

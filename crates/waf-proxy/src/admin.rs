@@ -393,6 +393,9 @@ fn route_api(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
                 #[serde(default)] defenses: Option<DefensesPatch>,
                 #[serde(default)] blocked_countries: Option<Vec<String>>,
                 #[serde(default)] honeypot_paths:    Option<Vec<String>>,
+                #[serde(default)] turnstile_provider: Option<String>,
+                #[serde(default)] turnstile_site_key: Option<String>,
+                #[serde(default)] turnstile_secret:   Option<String>,
             }
             #[derive(Deserialize)]
             struct RulesPatch {
@@ -458,6 +461,11 @@ fn route_api(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
             if let Some(v) = patch.datacenter_block    { r.datacenter_block.store(v, Ordering::Relaxed); }
             if let Some(paths) = patch.honeypot_paths {
                 engine.honeypots.replace(paths);
+            }
+            if let Some(s) = patch.turnstile_provider { *r.turnstile_provider.write() = s.to_lowercase(); }
+            if let Some(s) = patch.turnstile_site_key { *r.turnstile_site_key.write() = s; }
+            if let Some(s) = patch.turnstile_secret   {
+                if !s.is_empty() { *r.turnstile_secret.write() = s; }
             }
             if let Some(c) = patch.blocked_countries {
                 *r.blocked_countries.write() = c.into_iter().map(|s| s.to_ascii_uppercase()).collect();

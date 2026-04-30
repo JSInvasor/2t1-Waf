@@ -73,6 +73,11 @@ impl ProxyHttp for WafProxy {
             handle_bic_verify(session, &self.engine, req.client_ip).await;
             return Ok(true);
         }
+        if req.path == "/__2t1/turnstile-verify" && req.method.eq_ignore_ascii_case("POST") {
+            ctx.handled_locally = true;
+            handle_turnstile_verify(session, &self.engine, req.client_ip).await;
+            return Ok(true);
+        }
         if req.path == "/__2t1/healthz" {
             ctx.handled_locally = true;
             respond_text(session, 200, "ok\n", &[]).await;
@@ -323,6 +328,30 @@ async fn serve_challenge(session: &mut Session, engine: &Engine, d: &Decision) {
         return;
     }
 
+    // After BIC (if any), pick PoW vs interactive captcha based on the
+    // operator-selected ChallengeMode.
+    let mode = engine.runtime.challenge_mode_v();
+    if matches!(mode, waf_core::runtime::ChallengeMode::Interactive
+                    | waf_core::runtime::ChallengeMode::Combined) {
+        let site_key = engine.runtime.turnstile_site_key.read().clone();
+        let provider_name = engine.runtime.turnstile_provider.read().clone();
+        if !site_key.is_empty() {
+            let provider = waf_core::turnstile::Provider::from_str(&provider_name);
+            let original = req.uri.path_and_query()
+                .map(|p| p.as_str().to_string())
+                .unwrap_or_else(|| "/".into());
+            let body = waf_core::turnstile::render_page(provider, &site_key, &d.request_id, &original);
+            let extra: Vec<(&str, &str)> = vec![
+                ("cache-control", "no-store, private"),
+                ("x-waf-action", "captcha"),
+            ];
+            write_response(session, 403, "text/html; charset=utf-8", body.as_bytes(), &extra).await;
+            return;
+        }
+        // Site key not configured — fall back to PoW so we never serve
+        // a broken captcha widget.
+    }
+
     // Fall through to the heavyweight PoW challenge.
     let token = engine.challenger.issue();
     let body = engine.challenger.render_page(&token, &d.request_id);
@@ -331,6 +360,46 @@ async fn serve_challenge(session: &mut Session, engine: &Engine, d: &Decision) {
         ("x-waf-action", "challenge"),
     ];
     write_response(session, 403, "text/html; charset=utf-8", body.as_bytes(), &extra).await;
+}
+
+async fn handle_turnstile_verify(session: &mut Session, engine: &Engine, client_ip: std::net::IpAddr) {
+    use waf_core::turnstile::{verify, Provider};
+
+    // Read up to 8 KiB of body — JSON `{"token": "..."}`.
+    let mut buf = Vec::with_capacity(512);
+    while buf.len() < 8192 {
+        match session.as_mut().read_request_body().await {
+            Ok(Some(chunk)) => buf.extend_from_slice(&chunk),
+            _ => break,
+        }
+    }
+    #[derive(serde::Deserialize)]
+    struct Submit { token: String }
+
+    let token = serde_json::from_slice::<Submit>(&buf).ok().map(|s| s.token).unwrap_or_default();
+    let secret   = engine.runtime.turnstile_secret.read().clone();
+    let provider = Provider::from_str(&engine.runtime.turnstile_provider.read());
+
+    if secret.is_empty() {
+        write_response(session, 503, "application/json",
+            br#"{"error":"captcha not configured"}"#, &[]).await;
+        return;
+    }
+    let ok = verify(provider, &secret, &token, &client_ip.to_string()).await;
+    if ok {
+        // Reuse the PoW Challenger's clearance cookie — same downstream
+        // semantics, so once the visitor passes a captcha they enjoy
+        // the full PoW-cleared trust window.
+        let cookie_value = engine.challenger.mint_clearance();
+        let cookie = format!(
+            "{}={}; Path=/; Max-Age={}; HttpOnly; SameSite=Lax",
+            engine.challenger.cookie_name(), cookie_value, engine.challenger.cookie_ttl(),
+        );
+        write_response(session, 204, "text/plain", b"", &[("set-cookie", cookie.as_str())]).await;
+    } else {
+        write_response(session, 403, "application/json",
+            br#"{"error":"captcha verification failed"}"#, &[]).await;
+    }
 }
 
 async fn handle_bic_verify(session: &mut Session, engine: &Engine, client_ip: std::net::IpAddr) {

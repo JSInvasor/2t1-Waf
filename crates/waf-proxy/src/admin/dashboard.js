@@ -370,6 +370,14 @@ function applyDefense(rt, m) {
   $$("#challenge-mode-seg .seg-btn").forEach(b =>
     b.dataset.active = (parseInt(b.dataset.cm,10) === cm) ? "1" : "0");
 
+  // Turnstile / hCaptcha config (secret never returned by the API).
+  const tp = (rt.turnstile_provider || "turnstile").toLowerCase();
+  $$("#turnstile-provider-seg .seg-btn").forEach(b =>
+    b.dataset.active = (b.dataset.tp === tp) ? "1" : "0");
+  if ($("#turnstile-site-key") && document.activeElement !== $("#turnstile-site-key")) {
+    $("#turnstile-site-key").value = rt.turnstile_site_key || "";
+  }
+
   $("#auto-uam-on").checked = !!rt.auto_uam_enabled;
   $("#auto-uam-threshold").value = rt.auto_uam_threshold ?? "";
 
@@ -795,6 +803,21 @@ document.addEventListener("click", async e => {
   if (cmBtn) {
     const cm = parseInt(cmBtn.dataset.cm, 10);
     await patchRuntime({ challenge_mode: cm });
+    return;
+  }
+  // Captcha provider segment
+  const tpBtn = e.target.closest("[data-tp]");
+  if (tpBtn) {
+    await patchRuntime({ turnstile_provider: tpBtn.dataset.tp });
+    return;
+  }
+  // Turnstile config save
+  if (e.target.matches('[data-save="turnstile"]')) {
+    const patch = { turnstile_site_key: $("#turnstile-site-key").value.trim() };
+    const sec = $("#turnstile-secret").value;
+    if (sec) patch.turnstile_secret = sec;
+    await patchRuntime(patch);
+    $("#turnstile-secret").value = "";
     return;
   }
   // Auto-UAM threshold save

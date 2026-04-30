@@ -52,6 +52,12 @@ pub struct Runtime {
 
     pub auth_token: RwLock<String>,
 
+    /// Captcha provider for `ChallengeMode::Interactive`.
+    /// "turnstile" (Cloudflare) or "hcaptcha".
+    pub turnstile_provider: RwLock<String>,
+    pub turnstile_site_key: RwLock<String>,
+    pub turnstile_secret:   RwLock<String>,
+
     persist_path: RwLock<Option<PathBuf>>,
 }
 
@@ -129,6 +135,9 @@ pub struct PersistedRuntime {
     #[serde(default)] pub defenses: PersistedDefenses,
     #[serde(default)] pub honeypot_paths: Option<Vec<String>>,
     #[serde(default)] pub auth_token: Option<String>,
+    #[serde(default)] pub turnstile_provider: Option<String>,
+    #[serde(default)] pub turnstile_site_key: Option<String>,
+    #[serde(default)] pub turnstile_secret:   Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -196,6 +205,9 @@ impl Runtime {
             deny: RwLock::new(Vec::new()),
             blocked_countries: RwLock::new(cfg.geoip.block_countries.clone()),
             auth_token: RwLock::new(generate_token()),
+            turnstile_provider: RwLock::new("turnstile".to_string()),
+            turnstile_site_key: RwLock::new(String::new()),
+            turnstile_secret:   RwLock::new(String::new()),
             persist_path: RwLock::new(None),
         }
     }
@@ -257,6 +269,9 @@ impl Runtime {
             .map(|c| c.to_ascii_uppercase()).collect();
 
         if let Some(t) = p.auth_token { if !t.is_empty() { *self.auth_token.write() = t; } }
+        if let Some(s) = p.turnstile_provider { *self.turnstile_provider.write() = s; }
+        if let Some(s) = p.turnstile_site_key { *self.turnstile_site_key.write() = s; }
+        if let Some(s) = p.turnstile_secret   { *self.turnstile_secret.write()   = s; }
         Ok(())
     }
 
@@ -301,6 +316,12 @@ impl Runtime {
             datacenter_block:    Some(self.datacenter_block.load(Ordering::Relaxed)),
             honeypot_paths: None, // filled in by Engine which owns the Honeypots store
             auth_token: Some(self.auth_token.read().clone()),
+            turnstile_provider: Some(self.turnstile_provider.read().clone()),
+            turnstile_site_key: Some(self.turnstile_site_key.read().clone()),
+            // Secret is intentionally NOT round-tripped to the dashboard
+            // GET responses (only loaded from runtime.json on startup,
+            // and accepted on POST writes).
+            turnstile_secret: None,
         }
     }
 
