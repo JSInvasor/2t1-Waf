@@ -68,6 +68,11 @@ impl ProxyHttp for WafProxy {
             handle_verify(session, &self.engine).await;
             return Ok(true);
         }
+        if req.path == "/__2t1/bic-verify" && req.method.eq_ignore_ascii_case("POST") {
+            ctx.handled_locally = true;
+            handle_bic_verify(session, &self.engine, req.client_ip).await;
+            return Ok(true);
+        }
         if req.path == "/__2t1/healthz" {
             ctx.handled_locally = true;
             respond_text(session, 200, "ok\n", &[]).await;
@@ -287,6 +292,38 @@ async fn serve_tarpit(session: &mut Session) {
 }
 
 async fn serve_challenge(session: &mut Session, engine: &Engine, d: &Decision) {
+    // If BIC is enabled and this client doesn't already have a valid BIC
+    // cookie, serve the silent integrity check first. Real browsers pass
+    // it in <100 ms with no friction; bots that don't run JS get stuck.
+    let bic_on = engine.runtime.defenses.bic.load(std::sync::atomic::Ordering::Relaxed);
+    let req = session.req_header();
+    let cookie_hdr = req.headers.get("cookie")
+        .and_then(|v| v.to_str().ok()).unwrap_or("");
+    let cookies = waf_core::request::parse_cookie_header(cookie_hdr);
+    let bic_present = cookies.get(engine.bic.cookie_name())
+        .map(|c| {
+            let ip = session.client_addr().and_then(|a| a.as_inet())
+                .map(|a| a.ip())
+                .unwrap_or_else(|| std::net::IpAddr::from([0,0,0,0]));
+            engine.bic.verify_cookie(c, ip)
+        })
+        .unwrap_or(false);
+
+    if bic_on && !bic_present {
+        let token = engine.bic.issue();
+        let original = req.uri.path_and_query()
+            .map(|p| p.as_str().to_string())
+            .unwrap_or_else(|| "/".into());
+        let body = engine.bic.render_page(&token, &d.request_id, &original);
+        let extra: Vec<(&str, &str)> = vec![
+            ("cache-control", "no-store, private"),
+            ("x-waf-action", "bic"),
+        ];
+        write_response(session, 200, "text/html; charset=utf-8", body.as_bytes(), &extra).await;
+        return;
+    }
+
+    // Fall through to the heavyweight PoW challenge.
     let token = engine.challenger.issue();
     let body = engine.challenger.render_page(&token, &d.request_id);
     let extra: Vec<(&str, &str)> = vec![
@@ -294,6 +331,34 @@ async fn serve_challenge(session: &mut Session, engine: &Engine, d: &Decision) {
         ("x-waf-action", "challenge"),
     ];
     write_response(session, 403, "text/html; charset=utf-8", body.as_bytes(), &extra).await;
+}
+
+async fn handle_bic_verify(session: &mut Session, engine: &Engine, client_ip: std::net::IpAddr) {
+    let mut buf = Vec::with_capacity(256);
+    while buf.len() < 1024 {
+        match session.as_mut().read_request_body().await {
+            Ok(Some(chunk)) => buf.extend_from_slice(&chunk),
+            _ => break,
+        }
+    }
+    #[derive(serde::Deserialize)]
+    struct Submit { c: String, e: u64, s: String, p: String }
+
+    let ok = serde_json::from_slice::<Submit>(&buf).ok().map(|s| {
+        engine.bic.verify_proof(&s.c, s.e, &s.s, &s.p).is_ok()
+    }).unwrap_or(false);
+
+    if ok {
+        let (name, value) = engine.bic.mint(client_ip);
+        let cookie = format!(
+            "{}={}; Path=/; Max-Age={}; HttpOnly; SameSite=Lax",
+            name, value, engine.bic.ttl(),
+        );
+        write_response(session, 204, "text/plain", b"", &[("set-cookie", cookie.as_str())]).await;
+    } else {
+        write_response(session, 400, "application/json",
+            br#"{"error":"bic verification failed"}"#, &[]).await;
+    }
 }
 
 async fn handle_verify(session: &mut Session, engine: &Engine) {

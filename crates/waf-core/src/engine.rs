@@ -4,6 +4,7 @@
 //! minimum work.
 
 use crate::behavior::BehaviorTracker;
+use crate::bic::Bic;
 use crate::bot_score;
 use crate::challenge::Challenger;
 use crate::config::Config;
@@ -44,6 +45,7 @@ pub struct Engine {
     pub replay:   Arc<RequestReplay>,
     pub dist_ua:  Arc<DistributedUa>,
     pub goodbot:  Arc<GoodBotVerifier>,
+    pub bic:      Arc<Bic>,
     /// Optional persistent event sink. None = in-memory ring only.
     pub storage_sink: RwLock<Option<Sink>>,
     pub storage_path: RwLock<Option<std::path::PathBuf>>,
@@ -77,6 +79,7 @@ impl Engine {
             cfg.challenge.cookie_ttl_secs,
             cfg.challenge.pow_difficulty,
         );
+        let _bic_secret_clone = cfg.challenge.hmac_secret.clone();
         let runtime = Arc::new(Runtime::from_config(&cfg));
         Ok(Arc::new(Self {
             cfg: Arc::new(cfg),
@@ -94,6 +97,7 @@ impl Engine {
             replay:   Arc::new(RequestReplay::default()),
             dist_ua:  Arc::new(DistributedUa::default()),
             goodbot:  Arc::new(GoodBotVerifier::default()),
+            bic:      Arc::new(Bic::new(&_bic_secret_clone)),
             storage_sink: RwLock::new(None),
             storage_path: RwLock::new(None),
         }))
@@ -287,11 +291,21 @@ impl Engine {
         if let Some(r) = self.geoip_reason(ctx) { decision.add_reason(r); }
         for r in self.header_reasons(ctx)      { decision.add_reason(r); }
 
+        // Silent BIC cookie acts like a lower-strength clearance: when
+        // present and valid, we skip bot_score (the layer most prone to
+        // false positives on minor UA quirks) but still run every DDoS
+        // pattern / behaviour / subnet check.
+        let has_bic = self.runtime.defenses.bic.load(Ordering::Relaxed)
+            && ctx.cookie(self.bic.cookie_name())
+                .map(|v| self.bic.verify_cookie(v, ctx.client_ip))
+                .unwrap_or(false);
+
         // Browser/bot heuristics (header completeness, UA consistency).
         // Skipped while a good-bot verification is in flight so the very
         // first request from an SEO crawler isn't bounced through the
-        // challenge before its PTR record is checked.
-        if !goodbot_pending && self.runtime.defenses.bot_score.load(Ordering::Relaxed) {
+        // challenge before its PTR record is checked. Also skipped when
+        // a valid BIC cookie is present.
+        if !goodbot_pending && !has_bic && self.runtime.defenses.bot_score.load(Ordering::Relaxed) {
             for r in bot_score::score(ctx) { decision.add_reason(r); }
         }
 

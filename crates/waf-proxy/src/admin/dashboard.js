@@ -77,6 +77,7 @@ const DEFENSE_KEYS = [
   ["replay",    "Request replay flood"],
   ["dist_ua",   "Distributed UA (botnet signature)"],
   ["goodbot",   "Good-bot whitelist (reverse-DNS verified)"],
+  ["bic",       "Silent BIC (invisible browser integrity check)"],
 ];
 function navigate() {
   const hash = location.hash.replace("#/", "") || "overview";
