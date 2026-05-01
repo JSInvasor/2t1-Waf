@@ -29,8 +29,8 @@ pub fn scan(s: &Surface) -> Option<Hit> {
     ] {
         if PATTERNS.is_match(field) {
             return Some(Hit {
-                rule_id: "LFI-01",
-                category: "lfi",
+                rule_id: "LFI-01".to_string(),
+                category: "lfi".to_string(),
                 matched_field: field_name,
                 matched_excerpt: excerpt(field),
             });
@@ -52,7 +52,7 @@ mod tests {
             method: "GET".into(), uri: format!("/x?{query}"), path: "/x".into(),
             query: query.into(), host: "h".into(), user_agent: "".into(),
             headers: HashMap::new(), cookies: HashMap::new(),
-            body_preview: vec![], content_length: None, country: None,
+            http_version: "HTTP/1.1".into(), header_order: vec![], cookie_order: vec![], body_preview: vec![], content_length: None, country: None, ja4h: String::new(),
         }
     }
 

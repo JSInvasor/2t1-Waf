@@ -25,3 +25,8 @@ url = { workspace = true }
 percent-encoding = { workspace = true }
 http = { workspace = true }
 bytes = { workspace = true }
+rusqlite = { version = "0.31", features = ["bundled"] }
+tokio = { workspace = true }
+dns-lookup = "2"
+openssl = "0.10"
+tokio-openssl = "0.6"

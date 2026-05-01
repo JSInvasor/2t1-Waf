@@ -37,10 +37,25 @@ fn main() -> anyhow::Result<()> {
     if !runtime_state_path.is_empty() {
         let path = PathBuf::from(&runtime_state_path);
         if let Some(parent) = path.parent() { let _ = std::fs::create_dir_all(parent); }
-        if let Err(e) = engine.runtime.bind_persist_file(path) {
+        if let Err(e) = engine.runtime.bind_persist_file(path.clone()) {
             tracing::error!(%e, "failed to load runtime state");
         }
+        // Persist auto-bans alongside runtime state so they survive restarts.
+        let bans_path = path.with_file_name("bans.json");
+        if let Err(e) = engine.reputations.bind_persist_file(bans_path) {
+            tracing::error!(%e, "failed to load persisted bans");
+        }
     }
+
+    // Persistent SQLite event store. The writer task runs on the same
+    // tokio runtime as the admin server (Pingora's per-service runtime),
+    // and submit() is non-blocking, so the proxy hot path never touches
+    // disk. Storage path lives next to runtime.json by default.
+    let db_path = if runtime_state_path.is_empty() {
+        PathBuf::from("data/events.db")
+    } else {
+        PathBuf::from(&runtime_state_path).with_file_name("events.db")
+    };
 
     let mut server_conf = ServerConf::default();
     server_conf.threads = threads;
@@ -74,8 +89,16 @@ fn main() -> anyhow::Result<()> {
         tracing::info!(%listen_tls, "https listener up");
     }
 
+    // Persistent SQLite event store (opens DB, attaches sink to engine).
+    server.add_service(admin::storage_service(engine.clone(), db_path));
+
     // Local admin / metrics service for the dashboard.
     server.add_service(admin::admin_service(engine.clone(), admin_listen.clone()));
+
+    // Auto-UAM watchdog: monitors block rate and escalates / de-escalates the
+    // UAM level on its own when enabled.
+    server.add_service(admin::auto_uam_service(engine.clone()));
+
     tracing::info!(%admin_listen, token = %engine.runtime.auth_token.read(), "admin token (use as Bearer)");
 
     tracing::info!(threads, "2t1-waf running");

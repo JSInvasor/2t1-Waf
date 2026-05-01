@@ -64,6 +64,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
       Overview
     </a>
+    <a href="#/defense" class="nav-item" data-route="defense">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 2 4 5v6c0 5 3.5 9 8 11 4.5-2 8-6 8-11V5l-8-3z"/><path d="m9 12 2 2 4-4"/></svg>
+      Defense
+    </a>
     <a href="#/firewall" class="nav-item" data-route="firewall">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
       Firewall
@@ -124,29 +128,74 @@
   <!-- ============== OVERVIEW ============== -->
   <section data-page="overview" class="page wrap">
     <div class="page-head">
-      <h2 class="h">Overview</h2>
-      <div class="h-sub">Live counters, top entities, and a 60-second per-second chart.</div>
+      <h2 class="h">Statistics</h2>
+      <div class="h-sub">Real-time counters and a 60-second activity chart for the protected origin.</div>
     </div>
 
-    <div class="kpi-row">
-      <div class="kpi"><div class="kpi-label">Allowed</div><div class="kpi-value" id="kpi-allowed">0</div><div class="kpi-bar ok"></div></div>
-      <div class="kpi"><div class="kpi-label">Challenged</div><div class="kpi-value" id="kpi-challenged">0</div><div class="kpi-bar warn"></div></div>
-      <div class="kpi"><div class="kpi-label">Blocked</div><div class="kpi-value" id="kpi-blocked">0</div><div class="kpi-bar bad"></div></div>
-      <div class="kpi"><div class="kpi-label">Rate-limited</div><div class="kpi-value" id="kpi-rate-limited">0</div><div class="kpi-bar"></div></div>
-      <div class="kpi"><div class="kpi-label">In-flight</div><div class="kpi-value" id="kpi-in-flight">0</div><div class="kpi-bar"></div></div>
-      <div class="kpi"><div class="kpi-label">Upstream errors</div><div class="kpi-value" id="kpi-upstream-errors">0</div><div class="kpi-bar bad"></div></div>
-    </div>
-
-    <div class="card">
-      <div class="card-head">
-        <h3 class="card-title">Last 60 seconds</h3>
-        <div class="legend">
-          <span class="lg ok">allow</span>
-          <span class="lg warn">challenge</span>
-          <span class="lg bad">block</span>
-        </div>
+    <div class="select-row">
+      <div class="select"><span class="sel-mark">$</span><span id="sel-host">protected origin</span><span class="sel-chev">›</span></div>
+      <div class="range-pills" id="range-pills" role="tablist">
+        <button class="range-pill" data-range="live" aria-selected="true"><span class="rp-dot"></span>Live</button>
+        <button class="range-pill" data-range="30m">30m</button>
+        <button class="range-pill" data-range="1h">1h</button>
+        <button class="range-pill" data-range="6h">6h</button>
+        <button class="range-pill" data-range="24h">24h</button>
       </div>
-      <canvas id="ring-chart" height="170"></canvas>
+    </div>
+
+    <div class="kpi-strip">
+      <div class="kpi-stat"><div class="kpi-label">Total requests</div><div class="kpi-stat-value" id="stat-total">0</div></div>
+      <div class="kpi-stat"><div class="kpi-label">Allowed</div><div class="kpi-stat-value ok" id="stat-allowed">0</div></div>
+      <div class="kpi-stat"><div class="kpi-label">Blocks</div><div class="kpi-stat-value bad" id="stat-blocked">0</div></div>
+      <div class="kpi-stat"><div class="kpi-label">Challenges</div><div class="kpi-stat-value warn" id="stat-challenged">0</div></div>
+      <div class="kpi-stat"><div class="kpi-label">Unique IPs</div><div class="kpi-stat-value" id="stat-uniq-ips">0</div></div>
+      <div class="kpi-stat"><div class="kpi-label">Countries</div><div class="kpi-stat-value" id="stat-uniq-countries">0</div></div>
+    </div>
+
+    <div class="kpi-strip three">
+      <div class="kpi-stat"><div class="kpi-label"><span class="dot ok"></span>RPS · current</div><div class="kpi-stat-value mono" id="stat-rps">0</div></div>
+      <div class="kpi-stat"><div class="kpi-label"><span class="dot warn"></span>Block rate</div><div class="kpi-stat-value mono" id="stat-block-rate">0%</div></div>
+      <div class="kpi-stat"><div class="kpi-label"><span class="dot bad"></span>In-flight</div><div class="kpi-stat-value mono" id="stat-inflight">0</div></div>
+    </div>
+
+    <div class="grid-charts">
+      <div class="card chart-card">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Requests per second</div>
+            <div class="chart-sub mut">last 60 sec · stacked allow / challenge / block</div>
+          </div>
+          <div class="legend">
+            <span class="lg ok">allow</span>
+            <span class="lg warn">challenge</span>
+            <span class="lg bad">block</span>
+          </div>
+        </div>
+        <canvas id="ring-chart" height="220"></canvas>
+        <div class="chart-axis" id="chart-axis"></div>
+      </div>
+
+      <div class="card chart-card">
+        <div class="chart-head">
+          <div>
+            <div class="chart-title">Block ratio</div>
+            <div class="chart-sub mut">last 60 sec · share of decisions blocked</div>
+          </div>
+          <div class="ratio-mini" id="block-ratio-mini">—</div>
+        </div>
+        <canvas id="ratio-chart" height="220"></canvas>
+      </div>
+    </div>
+
+    <div class="card compare-card">
+      <div class="compare-head">Compare · last 60s vs previous 60s</div>
+      <div class="compare-row">
+        <div class="cmp"><div class="cmp-label">Total requests</div><div class="cmp-val" id="cmp-total">—</div><div class="cmp-delta" id="cmp-total-d">—</div></div>
+        <div class="cmp"><div class="cmp-label">Allowed</div><div class="cmp-val ok" id="cmp-allowed">—</div><div class="cmp-delta" id="cmp-allowed-d">—</div></div>
+        <div class="cmp"><div class="cmp-label">Blocks</div><div class="cmp-val bad" id="cmp-blocks">—</div><div class="cmp-delta" id="cmp-blocks-d">—</div></div>
+        <div class="cmp"><div class="cmp-label">Challenges</div><div class="cmp-val warn" id="cmp-challenges">—</div><div class="cmp-delta" id="cmp-challenges-d">—</div></div>
+        <div class="cmp"><div class="cmp-label">Avg RPS</div><div class="cmp-val mono" id="cmp-rps">—</div><div class="cmp-delta" id="cmp-rps-d">—</div></div>
+      </div>
     </div>
 
     <div class="grid-2">
@@ -154,6 +203,134 @@
       <div class="card"><div class="card-head"><h3 class="card-title">Top paths</h3></div><div class="rows" id="top-paths"></div></div>
       <div class="card"><div class="card-head"><h3 class="card-title">Top rules</h3></div><div class="rows" id="top-rules"></div></div>
       <div class="card"><div class="card-head"><h3 class="card-title">Top countries</h3></div><div class="rows" id="top-countries"></div></div>
+    </div>
+  </section>
+
+  <!-- ============== DEFENSE ============== -->
+  <section data-page="defense" class="page wrap hidden">
+    <div class="page-head">
+      <h2 class="h">Defense</h2>
+      <div class="h-sub">Anti-DDoS posture. Switch UAM levels, toggle defenses, and let the watchdog drive escalation automatically when a flood lands.</div>
+    </div>
+
+    <div class="card uam-card">
+      <div class="card-head">
+        <h3 class="card-title">Under-Attack Mode</h3>
+        <span class="card-meta mut" id="uam-current">level —</span>
+      </div>
+      <div class="uam-levels">
+        <button class="uam-lvl" data-uam="0"><span class="lvl-num">0</span><span class="lvl-name">Off</span><span class="lvl-desc">normal traffic</span></button>
+        <button class="uam-lvl" data-uam="1"><span class="lvl-num">1</span><span class="lvl-name">Low</span><span class="lvl-desc">tight thresholds</span></button>
+        <button class="uam-lvl" data-uam="2"><span class="lvl-num">2</span><span class="lvl-name">Medium</span><span class="lvl-desc">force challenge · 50% RPM</span></button>
+        <button class="uam-lvl" data-uam="3"><span class="lvl-num">3</span><span class="lvl-name">High</span><span class="lvl-desc">25% RPM · cap 50</span></button>
+        <button class="uam-lvl" data-uam="4"><span class="lvl-num">4</span><span class="lvl-name">Extreme</span><span class="lvl-desc">10% RPM · cap 25</span></button>
+      </div>
+      <button class="cli-btn panic" id="panic-btn">⚠ PANIC · go Extreme</button>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head"><h3 class="card-title">Auto-UAM watchdog</h3></div>
+        <p class="mut">Sample window 5s · escalates when blocks/sec exceed the threshold, de-escalates at ¼ of it. 30s cool-down between level changes.</p>
+        <label class="tog"><span>Enable auto-UAM</span><input id="auto-uam-on" type="checkbox"><span class="switch"></span></label>
+        <label class="form-label">Escalate threshold (blocks per second)</label>
+        <div class="form-row">
+          <input id="auto-uam-threshold" type="number" min="1" max="10000">
+          <button class="cli-btn" data-save="auto-uam">Save</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3 class="card-title">Challenge mode</h3></div>
+        <p class="mut">How freshly-arriving visitors are vetted when UAM is engaged or the score crosses the challenge threshold.</p>
+        <div class="seg" id="challenge-mode-seg">
+          <button class="seg-btn" data-cm="0">PoW</button>
+          <button class="seg-btn" data-cm="1">Interactive</button>
+          <button class="seg-btn" data-cm="2">Combined</button>
+        </div>
+        <div class="mut" style="margin-top:10px; font-size:11px;">
+          PoW = browser solves a SHA-256 proof. Interactive = real captcha (Turnstile / hCaptcha). Combined = silent BIC + interactive.
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3 class="card-title">Captcha provider · Interactive mode</h3><span class="card-meta mut">Cloudflare Turnstile or hCaptcha</span></div>
+      <div class="seg" id="turnstile-provider-seg" style="margin-bottom:14px;">
+        <button class="seg-btn" data-tp="turnstile">Turnstile</button>
+        <button class="seg-btn" data-tp="hcaptcha">hCaptcha</button>
+      </div>
+      <label class="form-label">Site key (public · embedded in challenge HTML)</label>
+      <div class="form-row">
+        <input id="turnstile-site-key" type="text" placeholder="0x4AAA…">
+        <button class="cli-btn" data-save="turnstile">Save</button>
+      </div>
+      <label class="form-label">Secret (server-only · write-once · never returned by /api/state)</label>
+      <div class="form-row">
+        <input id="turnstile-secret" type="password" placeholder="leave blank to keep current">
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3 class="card-title">Heuristic defenses</h3><span class="card-meta mut">9 layers · all hot-toggleable</span></div>
+      <div class="toggles" id="defense-toggles"></div>
+      <p class="mut" style="margin-top:14px; font-size:11px; line-height:1.7;">
+        <b>Bot score</b> — header completeness, UA / sec-ch-ua consistency, modern browser fingerprints.<br>
+        <b>Behavior</b> — per-IP URL diversity, inter-arrival regularity, method bias, UA churn.<br>
+        <b>DDoS patterns</b> — GET-with-body, empty Connection, CORS-less OPTIONS, cache-buster spam, NUL bytes, query bloat.<br>
+        <b>Honeypots</b> — instant ban on requests to <code>/.env</code>, <code>/wp-config.php</code>, scanner trap paths.<br>
+        <b>Subnet</b> — /24 (IPv4) and /64 (IPv6) rate &amp; in-flight ceiling, catches botnets sharing a subnet.<br>
+        <b>Replay</b> — same (method+path+UA) hash hammered 25× from one IP in 30s.<br>
+        <b>Distributed UA</b> — single User-Agent observed from 8+ distinct IPs in 60s (botnet signature).<br>
+        <b>Good-bot whitelist</b> — Googlebot / Bingbot / Yandex / Baidu / Apple / Meta / LinkedIn / Twitter / Discord / DuckDuckGo with reverse-DNS verification. Spoofers add +60 score; first-hit pending bots get a lenient pass.<br>
+        <b>Silent BIC</b> — invisible browser integrity check served before the heavyweight PoW. Real browsers complete a tiny SHA-256 probe in &lt;100 ms and get a HMAC-signed cookie tied to their /24; bots that don't run JS never receive it.
+      </p>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h3 class="card-title">Verified good bots · live</h3><span class="card-meta mut">cached PTR results · <span id="goodbot-count">0</span></span></div>
+      <div class="rows" id="goodbot-rows"></div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head"><h3 class="card-title">Subnet ceilings</h3><span class="card-meta mut">/24 IPv4 · /64 IPv6</span></div>
+        <label class="form-label">Per-subnet RPM cap (0 = off)</label>
+        <div class="form-row">
+          <input id="subnet-rpm" type="number" min="0" max="1000000">
+          <button class="cli-btn" data-save="subnet">Save</button>
+        </div>
+        <label class="form-label">Per-subnet concurrent in-flight cap (0 = off)</label>
+        <div class="form-row">
+          <input id="subnet-conn" type="number" min="0" max="100000">
+        </div>
+        <p class="mut" style="font-size:11px;">Subnets currently tracked: <span id="subnets-tracked">0</span></p>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3 class="card-title">Honeypot paths</h3><span class="card-meta mut">instant ban · <span id="honeypot-count">0</span> traps</span></div>
+        <p class="mut" style="font-size:11.5px;">One path per line. Endings with <code>/</code> match prefixes; otherwise the match is exact.</p>
+        <textarea id="honeypot-paths" rows="10" placeholder="/.env&#10;/wp-config.php&#10;/.git/config&#10;/phpmyadmin/"></textarea>
+        <div class="form-row" style="margin-top:8px;">
+          <span></span>
+          <button class="cli-btn solid" id="honeypot-save">Save list</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <div class="card-head"><h3 class="card-title">Top attacker IPs</h3><span class="card-meta mut">live</span></div>
+        <div class="rows" id="top-attackers"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3 class="card-title">Block ratio · last 60s</h3></div>
+        <div class="ratio">
+          <div class="ratio-num" id="block-ratio">—</div>
+          <div class="ratio-sub mut">of all decisions in the ring buffer</div>
+        </div>
+        <canvas id="defense-spark" height="80"></canvas>
+      </div>
     </div>
   </section>
 
@@ -257,16 +434,18 @@
           <input id="filter-text" type="text" placeholder="filter…">
         </div>
       </div>
+      <p class="mut" style="font-size:11px; margin:4px 0 8px;">Click any row to expand the full reason list, headers, and JA4H breakdown.</p>
       <div class="table-wrap">
         <table class="event-table">
           <thead>
             <tr>
-              <th>time</th><th>ip</th><th>cc</th><th>method</th>
-              <th>host</th><th>path</th><th>action</th><th>status</th><th>score</th><th>rule</th>
+              <th></th><th>time</th><th>ip</th><th>cc</th><th>method</th>
+              <th>host</th><th>path</th><th>action</th><th>status</th>
+              <th>score</th><th>rule</th><th>ja4h</th>
             </tr>
           </thead>
           <tbody id="event-tbody">
-            <tr><td colspan="10" class="mut">connecting…</td></tr>
+            <tr><td colspan="12" class="mut">connecting…</td></tr>
           </tbody>
         </table>
       </div>
