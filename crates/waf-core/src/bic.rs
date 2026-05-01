@@ -122,41 +122,44 @@ impl Bic {
 r##"<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Security Check · Project Aretuze</title>
+<title>Security Check · Project Aretuza</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
-  :root{{--bg:#f5f6fa;--paper:#ffffff;--ink:#2f3640;--ink2:#111111;--muted:#7f8fa6;--accent:#e84118;--accent2:#c23616;--hair:rgba(0,0,0,.08);--glow:rgba(232,65,24,.1);}}
+  :root{{--bg:#f8f9fa;--paper:#ffffff;--ink:#2f3640;--ink2:#111111;--muted:#7f8fa6;--accent:#e84118;--accent2:#c23616;--hair:rgba(0,0,0,.08);--glow:rgba(232,65,24,.08);}}
   *{{box-sizing:border-box;margin:0;padding:0}}
   html,body{{height:100%}}
-  body{{background:var(--bg);color:var(--ink);font-family:'JetBrains Mono',ui-monospace,monospace;font-size:13px;display:grid;place-items:center;-webkit-font-smoothing:antialiased;overflow:hidden}}
+  body{{background:var(--bg);color:var(--ink);font-family:'JetBrains Mono',ui-monospace,monospace;font-size:13px;display:grid;place-items:center;-webkit-font-smoothing:antialiased;}}
   body::before{{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse 600px 400px at 50% 30%,var(--glow),transparent)}}
-  .card{{width:min(400px,92vw);background:var(--paper);border:1px solid var(--hair);border-radius:16px;padding:30px 32px;position:relative;z-index:2;box-shadow:0 15px 35px rgba(0,0,0,.05),0 0 0 1px rgba(255,255,255,.5) inset}}
-  .logo{{width:64px;height:64px;margin:0 auto 16px}}
+  .card{{width:min(400px,92vw);background:var(--paper);border:1px solid var(--hair);border-radius:16px;padding:40px 32px;position:relative;z-index:2;box-shadow:0 15px 35px rgba(0,0,0,.04),0 0 0 1px rgba(255,255,255,.5) inset}}
+  .logo{{width:64px;height:64px;margin:0 auto 20px}}
   .logo img{{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(232,65,24,.2))}}
-  .badge{{display:inline-flex;align-items:center;gap:6px;font-family:'Outfit',sans-serif;font-weight:500;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent2);background:rgba(232,65,24,.08);border:1px solid rgba(232,65,24,.15);padding:4px 12px;border-radius:20px;margin-bottom:14px;margin-left:auto;margin-right:auto;display:flex;width:max-content}}
+  .badge{{display:inline-flex;align-items:center;gap:6px;font-family:'Outfit',sans-serif;font-weight:500;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent2);background:rgba(232,65,24,.08);border:1px solid rgba(232,65,24,.15);padding:5px 14px;border-radius:20px;margin-bottom:18px;margin-left:auto;margin-right:auto;display:flex;width:max-content}}
   .badge .dot{{width:6px;height:6px;border-radius:50%;background:var(--accent2);animation:pulse 2s ease infinite}}
   @keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:.4}}}}
-  h1{{font-family:'Outfit',sans-serif;font-weight:500;font-size:17px;margin:0 0 6px;color:var(--ink2);text-align:center}}
+  h1{{font-family:'Outfit',sans-serif;font-weight:500;font-size:20px;margin:0 0 8px;color:var(--ink2);text-align:center}}
   .caret{{display:inline-block;width:1.5px;height:.95em;background:var(--accent2);margin-left:4px;vertical-align:text-bottom;color:transparent;animation:b 1.1s steps(2) infinite}}
   @keyframes b{{50%{{opacity:0}}}}
-  .sub{{font-family:'Outfit',sans-serif;font-weight:300;color:var(--muted);margin:6px 0 16px;font-size:12px;text-align:center}}
-  .bar{{height:4px;background:rgba(0,0,0,.06);border-radius:999px;overflow:hidden}}
-  .bar>div{{height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .15s ease}}
-  .foot{{margin-top:16px;display:flex;justify-content:space-between;font-family:'Outfit',sans-serif;font-weight:300;font-size:10.5px;color:var(--muted)}}
+  .sub{{font-family:'Outfit',sans-serif;font-weight:300;color:var(--muted);margin:8px 0 24px;font-size:12px;text-align:center}}
+  
+  .bar{{height:6px;background:#e0e0e0;border-radius:999px;position:relative}}
+  .bar>div{{height:100%;width:0;background:var(--accent);border-radius:999px;transition:width .15s ease;position:relative}}
+  .bar>div::after{{content:"";position:absolute;right:-4px;top:50%;transform:translateY(-50%);width:14px;height:14px;background:var(--accent);border-radius:50%;box-shadow:0 0 8px rgba(232,65,24,.6)}}
+  
+  .foot{{margin-top:24px;padding-top:16px;border-top:1px solid var(--hair);display:flex;justify-content:space-between;font-family:'Outfit',sans-serif;font-weight:300;font-size:10.5px;color:var(--muted)}}
   code{{background:rgba(0,0,0,.04);padding:1px 5px;border-radius:3px;color:var(--ink);font-size:10px;font-family:'JetBrains Mono',monospace}}
   .brand{{font-weight:600;color:var(--accent2);letter-spacing:.04em;text-transform:uppercase;font-size:10px}}
 </style></head><body>
 <div class="card">
   <div class="logo">
-    <img src="data:image/webp;base64,{logo_b64}" alt="Project Aretuze">
+    <img src="data:image/webp;base64,{logo_b64}" alt="Project Aretuza">
   </div>
   <div class="badge"><span class="dot"></span>integrity check</div>
   <h1>Verifying browser<span class="caret"></span></h1>
   <p class="sub">One moment — silent integrity check (no captcha).</p>
   <div class="bar"><div id="p"></div></div>
-  <div class="foot"><span>ref · <code>{request_id}</code></span><span class="brand">Project Aretuze</span></div>
+  <div class="foot"><span>ref · <code>{request_id}</code></span><span class="brand">Project Aretuza</span></div>
 </div>
 <script>
 (async () => {{

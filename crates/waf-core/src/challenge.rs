@@ -125,37 +125,40 @@ impl Challenger {
 r##"<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Security Check · Project Aretuze</title>
+<title>Security Check · Project Aretuza</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
-  :root{{--bg:#f5f6fa;--paper:#ffffff;--ink:#2f3640;--ink2:#111111;--muted:#7f8fa6;--accent:#e84118;--accent2:#c23616;--hair:rgba(0,0,0,.08);--glow:rgba(232,65,24,.1);}}
+  :root{{--bg:#f8f9fa;--paper:#ffffff;--ink:#2f3640;--ink2:#111111;--muted:#7f8fa6;--accent:#e84118;--accent2:#c23616;--hair:rgba(0,0,0,.08);--glow:rgba(232,65,24,.08);}}
   *{{box-sizing:border-box;margin:0;padding:0}}
   html,body{{height:100%}}
-  body{{background:var(--bg);color:var(--ink);font-family:'JetBrains Mono',ui-monospace,monospace;font-size:13px;display:grid;place-items:center;-webkit-font-smoothing:antialiased;overflow:hidden}}
+  body{{background:var(--bg);color:var(--ink);font-family:'JetBrains Mono',ui-monospace,monospace;font-size:13px;display:grid;place-items:center;-webkit-font-smoothing:antialiased;}}
   body::before{{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse 600px 400px at 50% 30%,var(--glow),transparent)}}
-  .card{{width:min(440px,92vw);background:var(--paper);border:1px solid var(--hair);border-radius:16px;padding:36px 38px;position:relative;z-index:2;box-shadow:0 15px 35px rgba(0,0,0,.05),0 0 0 1px rgba(255,255,255,.5) inset}}
-  .logo{{width:80px;height:80px;margin:0 auto 18px}}
+  .card{{width:min(440px,92vw);background:var(--paper);border:1px solid var(--hair);border-radius:16px;padding:40px 38px;position:relative;z-index:2;box-shadow:0 15px 35px rgba(0,0,0,.04),0 0 0 1px rgba(255,255,255,.5) inset}}
+  .logo{{width:80px;height:80px;margin:0 auto 24px}}
   .logo img{{width:100%;height:100%;object-fit:contain;filter:drop-shadow(0 4px 12px rgba(232,65,24,.2))}}
-  .badge{{display:inline-flex;align-items:center;gap:6px;font-family:'Outfit',sans-serif;font-weight:500;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent2);background:rgba(232,65,24,.08);border:1px solid rgba(232,65,24,.15);padding:4px 12px;border-radius:20px;margin-bottom:16px;margin-left:auto;margin-right:auto;display:flex;width:max-content}}
+  .badge{{display:inline-flex;align-items:center;gap:6px;font-family:'Outfit',sans-serif;font-weight:500;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent2);background:rgba(232,65,24,.08);border:1px solid rgba(232,65,24,.15);padding:5px 14px;border-radius:20px;margin-bottom:20px;margin-left:auto;margin-right:auto;display:flex;width:max-content}}
   .badge .dot{{width:6px;height:6px;border-radius:50%;background:var(--accent2);animation:pulse 2s ease infinite}}
   @keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:.4}}}}
-  h1{{font-family:'Outfit',sans-serif;font-weight:500;font-size:20px;margin:0 0 4px;color:var(--ink2);text-align:center}}
+  h1{{font-family:'Outfit',sans-serif;font-weight:500;font-size:22px;margin:0 0 8px;color:var(--ink2);text-align:center}}
   .caret{{display:inline-block;width:1.5px;height:.95em;background:var(--accent2);margin-left:5px;vertical-align:text-bottom;color:transparent;animation:blink 1.1s steps(2) infinite}}
   @keyframes blink{{50%{{opacity:0}}}}
-  p.sub{{font-family:'Outfit',sans-serif;font-weight:300;color:var(--muted);margin:12px 0 24px;font-size:13px;line-height:1.6;text-align:center}}
-  .progress{{height:4px;background:rgba(0,0,0,.06);border-radius:999px;overflow:hidden}}
-  .progress > div{{height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .15s ease}}
-  .meta{{margin-top:10px;font-size:10.5px;color:var(--muted);display:flex;justify-content:space-between;align-items:center;letter-spacing:.02em}}
+  p.sub{{font-family:'Outfit',sans-serif;font-weight:300;color:var(--muted);margin:8px 0 28px;font-size:13px;line-height:1.6;text-align:center}}
+  
+  .progress{{height:6px;background:#e0e0e0;border-radius:999px;position:relative}}
+  .progress > div{{height:100%;width:0;background:var(--accent);border-radius:999px;transition:width .15s ease;position:relative}}
+  .progress > div::after{{content:"";position:absolute;right:-4px;top:50%;transform:translateY(-50%);width:14px;height:14px;background:var(--accent);border-radius:50%;box-shadow:0 0 8px rgba(232,65,24,.6)}}
+  
+  .meta{{margin-top:14px;font-size:10.5px;color:var(--muted);display:flex;justify-content:space-between;align-items:center;letter-spacing:.02em}}
   .meta .nonce{{font-variant-numeric:tabular-nums}}
-  .foot{{margin-top:24px;padding-top:16px;border-top:1px solid var(--hair);display:flex;justify-content:space-between;align-items:center;font-family:'Outfit',sans-serif;font-weight:300;font-size:11px;color:var(--muted)}}
+  .foot{{margin-top:28px;padding-top:18px;border-top:1px solid var(--hair);display:flex;justify-content:space-between;align-items:center;font-family:'Outfit',sans-serif;font-weight:300;font-size:11px;color:var(--muted)}}
   .foot code{{background:rgba(0,0,0,.04);padding:2px 8px;border-radius:4px;color:var(--ink);font-size:10px;font-family:'JetBrains Mono',monospace}}
   .brand{{font-weight:600;color:var(--accent2);letter-spacing:.04em;text-transform:uppercase;font-size:10px}}
 </style></head><body>
 <div class="card">
   <div class="logo">
-    <img src="data:image/webp;base64,{logo_b64}" alt="Project Aretuze">
+    <img src="data:image/webp;base64,{logo_b64}" alt="Project Aretuza">
   </div>
   <div class="badge"><span class="dot"></span>security check</div>
   <h1>Checking your browser<span class="caret"></span></h1>
@@ -169,7 +172,7 @@ r##"<!doctype html>
 
   <div class="foot">
     <span>ref · <code>{request_id}</code></span>
-    <span class="brand">Project Aretuze</span>
+    <span class="brand">Project Aretuza</span>
   </div>
 </div>
 <script>
