@@ -329,7 +329,13 @@ impl Runtime {
         let path = match self.persist_path.read().clone() {
             Some(p) => p, None => return Ok(()),
         };
-        let snap = self.snapshot();
+        let mut snap = self.snapshot();
+        // snapshot() strips the secret for dashboard safety, but the
+        // on-disk file must keep it so it survives restarts.
+        let secret = self.turnstile_secret.read().clone();
+        if !secret.is_empty() {
+            snap.turnstile_secret = Some(secret);
+        }
         let json = serde_json::to_vec_pretty(&snap)?;
         // Write-then-rename for atomicity.
         let tmp = path.with_extension("json.tmp");
