@@ -106,11 +106,27 @@ impl Service for AutoUamService {
         use std::sync::atomic::Ordering;
         use std::time::Duration;
         let mut interval = tokio::time::interval(Duration::from_secs(5));
+        let mut gc_tick = tokio::time::interval(Duration::from_secs(60));
         let mut prev_blocks: u64 = self.engine.metrics.blocked.load(Ordering::Relaxed);
         let mut last_change: u64 = 0;
         loop {
             tokio::select! {
                 _ = shutdown.changed() => return,
+                _ = gc_tick.tick() => {
+                    // Sweep stale entries from all unbounded DashMaps.
+                    // Without this, ConnTracker / RateLimiter / Reputations
+                    // grow indefinitely and eventually OOM-kill the process.
+                    self.engine.conns.gc();
+                    self.engine.rate_limiter.gc(120);
+                    self.engine.reputations.gc();
+                    // Best-effort persist of auto-bans so they survive restarts.
+                    let _ = self.engine.reputations.persist();
+                    tracing::debug!(
+                        conn_tracked = self.engine.conns.total(),
+                        subnets = self.engine.subnets.tracked(),
+                        "gc sweep completed"
+                    );
+                }
                 _ = interval.tick() => {
                     if !self.engine.runtime.auto_uam_enabled.load(Ordering::Relaxed) {
                         prev_blocks = self.engine.metrics.blocked.load(Ordering::Relaxed);
@@ -518,20 +534,16 @@ async fn route_timeframe(req: &ParsedReq, engine: &Engine) -> (u16, &'static str
 
     if req.path == "/api/events/range" {
         let body = match path {
-            Some(p) => match waf_core::storage::Storage::open(&p) {
-                Ok(s) => s.query(since, until, limit).await.unwrap_or_default(),
-                Err(_) => engine.events.recent(limit),
-            },
+            Some(p) => waf_core::storage::query_readonly(&p, since, until, limit)
+                .await.unwrap_or_else(|_| engine.events.recent(limit)),
             None => engine.events.recent(limit),
         };
         return ok_json(serde_json::to_vec(&body).unwrap_or_default());
     }
     // /api/events/series
     let buckets = match path {
-        Some(p) => match waf_core::storage::Storage::open(&p) {
-            Ok(s) => s.series(since, until).await.unwrap_or_default(),
-            Err(_) => Vec::new(),
-        },
+        Some(p) => waf_core::storage::series_readonly(&p, since, until)
+            .await.unwrap_or_default(),
         None => Vec::new(),
     };
     ok_json(serde_json::to_vec(&buckets).unwrap_or_default())

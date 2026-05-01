@@ -265,3 +265,72 @@ CREATE INDEX IF NOT EXISTS events_ts ON events(ts_ms);
 CREATE INDEX IF NOT EXISTS events_action_ts ON events(action, ts_ms);
 CREATE INDEX IF NOT EXISTS events_ip_ts ON events(ip, ts_ms);
 ";
+
+/// Read-only range query — opens a short-lived Connection without spawning
+/// a writer task. Safe to call from the admin handler on every request.
+pub async fn query_readonly(
+    path: &std::path::Path, since_ms: u64, until_ms: u64, limit: usize,
+) -> anyhow::Result<Vec<Event>> {
+    let path = path.to_path_buf();
+    let limit = limit.min(5000);
+    tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<Event>> {
+        let conn = Connection::open_with_flags(
+            &path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT body FROM events
+             WHERE ts_ms >= ?1 AND ts_ms <= ?2
+             ORDER BY ts_ms DESC LIMIT ?3"
+        )?;
+        let rows = stmt.query_map(params![since_ms as i64, until_ms as i64, limit as i64], |r| {
+            let s: String = r.get(0)?;
+            Ok(s)
+        })?;
+        let mut out = Vec::with_capacity(limit);
+        for r in rows {
+            if let Ok(json) = r {
+                if let Ok(ev) = serde_json::from_str::<Event>(&json) {
+                    out.push(ev);
+                }
+            }
+        }
+        Ok(out)
+    }).await?
+}
+
+/// Read-only series query — like `query_readonly` but returns per-second
+/// aggregation buckets for charting.
+pub async fn series_readonly(
+    path: &std::path::Path, since_ms: u64, until_ms: u64,
+) -> anyhow::Result<Vec<TimeBucket>> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<TimeBucket>> {
+        let conn = Connection::open_with_flags(
+            &path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT (ts_ms / 1000) AS sec, action, COUNT(*) FROM events
+             WHERE ts_ms >= ?1 AND ts_ms <= ?2
+             GROUP BY sec, action ORDER BY sec ASC"
+        )?;
+        let rows = stmt.query_map(params![since_ms as i64, until_ms as i64], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?))
+        })?;
+        let mut out: Vec<TimeBucket> = Vec::new();
+        for row in rows {
+            let (sec, action, count) = row?;
+            let sec_u = sec as u64;
+            if let Some(b) = out.last_mut().filter(|b| b.sec == sec_u) {
+                b.add(&action, count as u32);
+            } else {
+                let mut b = TimeBucket { sec: sec_u, ..Default::default() };
+                b.add(&action, count as u32);
+                out.push(b);
+            }
+        }
+        Ok(out)
+    }).await?
+}
+

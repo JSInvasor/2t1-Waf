@@ -157,6 +157,16 @@ impl Reputations {
         }
     }
 
+    /// Remove expired bans and idle entries. Caller decides cadence.
+    pub fn gc(&self) {
+        let now = now_secs();
+        self.state.retain(|_, v| {
+            let s = v.lock();
+            // Keep entries that are still banned or had recent activity.
+            s.ban_until > now || now.saturating_sub(s.first_hit) < self.window_secs * 2
+        });
+    }
+
     /// Snapshot of currently banned IPs for the dashboard.
     pub fn banned(&self) -> Vec<(IpAddr, u64)> {
         let now = now_secs();
