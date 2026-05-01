@@ -124,146 +124,47 @@ impl Challenger {
 r##"<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Verifying browser</title>
+<title>Security Check · 2t1</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Outfit:wght@200;300;400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Outfit:wght@200;300;400;500;600&display=swap" rel="stylesheet">
 <style>
-  :root{{
-    --bg:#f4f3ee; --paper:#fafaf6; --ink:#111111; --ink-soft:#2a2a2a;
-    --muted:#8b8a84; --hair:rgba(17,17,17,.12); --hair-2:rgba(17,17,17,.07);
-  }}
-  *{{box-sizing:border-box}}
-  html,body{{margin:0;padding:0;height:100%}}
-  body{{
-    background:var(--bg); color:var(--ink);
-    font-family:'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
-    font-size:13px; line-height:1.55;
-    display:grid; place-items:center;
-    -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
-    overflow:hidden;
-  }}
-  body::before{{
-    content:""; position:fixed; inset:0; pointer-events:none;
-    background:
-      radial-gradient(circle at 20% 10%, rgba(17,17,17,.025), transparent 40%),
-      radial-gradient(circle at 80% 80%, rgba(17,17,17,.02), transparent 50%);
-  }}
-  .halo{{
-    position:fixed; top:50%; left:50%;
-    width:560px; height:560px; border-radius:50%;
-    transform:translate(-50%,-50%);
-    background:radial-gradient(circle at center,
-      rgba(17,17,17,.045) 0%, rgba(17,17,17,.018) 35%, transparent 70%);
-    pointer-events:none; z-index:1; mix-blend-mode:multiply;
-  }}
-  .box{{
-    width:min(440px, 92vw);
-    background:var(--paper);
-    border:1px solid var(--hair); border-radius:10px;
-    padding:30px 34px;
-    position:relative; z-index:2;
-    box-shadow:0 10px 30px rgba(17,17,17,.06);
-  }}
-  .logo{{
-    width:64px; height:50px;
-    margin:0 0 14px;
-    display:flex; align-items:center; justify-content:flex-start;
-  }}
-  .logo svg{{
-    width:100%; height:100%;
-    filter:drop-shadow(0 2px 4px rgba(230,59,39,.18));
-  }}
-  .tag{{
-    font-family:'Outfit', sans-serif; font-weight:400;
-    font-size:10px; letter-spacing:.08em; text-transform:uppercase;
-    color:var(--muted); margin-bottom:14px;
-    display:flex; align-items:center; gap:8px;
-  }}
-  .tag::before{{
-    content:""; width:6px; height:6px; border-radius:50%;
-    background:var(--ink-soft); display:inline-block;
-  }}
-  .prompt{{
-    font-size:11.5px; color:var(--muted); margin-bottom:6px;
-    font-weight:300;
-  }}
-  h1{{
-    font-family:'Outfit', sans-serif; font-weight:300;
-    font-size:18px; margin:0 0 4px; letter-spacing:.01em;
-    color:var(--ink);
-  }}
-  .caret{{
-    display:inline-block; width:1.5px; height:.95em;
-    background:var(--ink); margin-left:5px;
-    vertical-align:text-bottom; color:transparent;
-    animation:blink 1.1s steps(2) infinite;
-  }}
-  @keyframes blink{{ 50%{{opacity:0}} }}
-  p.sub{{
-    font-family:'Outfit', sans-serif; font-weight:300;
-    color:var(--muted); margin:14px 0 22px; font-size:12.5px;
-    line-height:1.6;
-  }}
-  .progress{{
-    height:2px; background:rgba(17,17,17,.08);
-    border-radius:999px; overflow:hidden;
-    position:relative;
-  }}
-  .progress > div{{
-    height:100%; width:0;
-    background:var(--ink);
-    transition:width .15s ease;
-  }}
-  .meta{{
-    margin-top:8px;
-    font-family:'JetBrains Mono', monospace;
-    font-size:10.5px; color:var(--muted);
-    display:flex; justify-content:space-between; align-items:center;
-    letter-spacing:.02em;
-  }}
-  .meta .nonce{{ font-variant-numeric:tabular-nums; }}
-  .foot{{
-    margin-top:22px; padding-top:14px;
-    border-top:1px dashed var(--hair-2);
-    display:flex; justify-content:space-between; align-items:center;
-    font-family:'Outfit', sans-serif; font-weight:300;
-    font-size:11px; color:var(--muted);
-  }}
-  .foot code{{
-    font-family:'JetBrains Mono', monospace;
-    background:rgba(17,17,17,.04); padding:2px 6px; border-radius:3px;
-    color:var(--ink-soft); font-size:10.5px;
-  }}
-  .brand{{
-    font-family:'Outfit', sans-serif; font-weight:400;
-    font-size:11px; letter-spacing:.05em;
-    display:inline-flex; align-items:center; gap:0;
-  }}
-  .brand .sep{{ color:var(--muted); margin:0 2px; }}
-  .brand .dot{{ color:var(--muted); margin:0 8px; }}
-  .brand a{{ color:var(--ink-soft); text-decoration:none; }}
-  .brand a:hover{{ color:var(--ink); }}
+  :root{{--bg:#0f0f0f;--paper:#181818;--ink:#e8e8e8;--ink2:#fff;--muted:#6b6b6b;--accent:#8B1A1A;--accent2:#a82020;--hair:rgba(255,255,255,.08);--glow:rgba(139,26,26,.15);}}
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  html,body{{height:100%}}
+  body{{background:var(--bg);color:var(--ink);font-family:'JetBrains Mono',ui-monospace,monospace;font-size:13px;display:grid;place-items:center;-webkit-font-smoothing:antialiased;overflow:hidden}}
+  body::before{{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse 600px 400px at 50% 30%,var(--glow),transparent)}}
+  .card{{width:min(440px,92vw);background:var(--paper);border:1px solid var(--hair);border-radius:16px;padding:36px 38px;position:relative;z-index:2;box-shadow:0 20px 60px rgba(0,0,0,.4),0 0 0 1px rgba(255,255,255,.03) inset}}
+  .logo{{width:72px;height:72px;margin:0 0 18px}}
+  .logo svg{{width:100%;height:100%;filter:drop-shadow(0 4px 12px rgba(139,26,26,.3))}}
+  .badge{{display:inline-flex;align-items:center;gap:6px;font-family:'Outfit',sans-serif;font-weight:500;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent2);background:rgba(139,26,26,.1);border:1px solid rgba(139,26,26,.15);padding:4px 12px;border-radius:20px;margin-bottom:16px}}
+  .badge .dot{{width:6px;height:6px;border-radius:50%;background:var(--accent2);animation:pulse 2s ease infinite}}
+  @keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:.4}}}}
+  h1{{font-family:'Outfit',sans-serif;font-weight:400;font-size:20px;margin:0 0 4px;color:var(--ink2)}}
+  .caret{{display:inline-block;width:1.5px;height:.95em;background:var(--accent2);margin-left:5px;vertical-align:text-bottom;color:transparent;animation:blink 1.1s steps(2) infinite}}
+  @keyframes blink{{50%{{opacity:0}}}}
+  p.sub{{font-family:'Outfit',sans-serif;font-weight:300;color:var(--muted);margin:12px 0 24px;font-size:13px;line-height:1.6}}
+  .progress{{height:3px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden}}
+  .progress > div{{height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .15s ease}}
+  .meta{{margin-top:10px;font-size:10.5px;color:var(--muted);display:flex;justify-content:space-between;align-items:center;letter-spacing:.02em}}
+  .meta .nonce{{font-variant-numeric:tabular-nums}}
+  .foot{{margin-top:24px;padding-top:16px;border-top:1px solid var(--hair);display:flex;justify-content:space-between;align-items:center;font-family:'Outfit',sans-serif;font-weight:300;font-size:11px;color:var(--muted)}}
+  .foot code{{background:rgba(255,255,255,.06);padding:2px 8px;border-radius:4px;color:var(--ink);font-size:10px}}
+  .brand{{font-weight:500;color:var(--accent2);letter-spacing:.04em}}
 </style></head><body>
-<div class="halo"></div>
-<div class="box">
+<div class="card">
   <div class="logo">
-    <svg viewBox="0 0 220 170" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <path fill="#e63b27" d="M28 70 L42 24 L52 65 L62 18 L72 65 L82 10 L92 65 L102 6 L112 65 L122 6 L132 65 L142 10 L152 65 L162 18 L172 65 L182 24 L196 70 Z"/>
-      <ellipse cx="112" cy="100" rx="82" ry="56" fill="#e63b27"/>
-      <path fill="#e63b27" d="M30 132 Q12 140 18 158 Q36 168 50 150 Q44 138 36 130 Z"/>
-      <path fill="#e63b27" d="M194 132 Q212 140 206 158 Q188 168 174 150 Q180 138 188 130 Z"/>
-      <ellipse cx="86" cy="92" rx="15" ry="18" fill="#fff"/>
-      <ellipse cx="138" cy="92" rx="15" ry="18" fill="#fff"/>
-      <ellipse cx="88" cy="95" rx="7" ry="9" fill="#1a1a1a"/>
-      <ellipse cx="140" cy="95" rx="7" ry="9" fill="#1a1a1a"/>
-      <circle cx="86" cy="91" r="2.4" fill="#fff"/>
-      <circle cx="138" cy="91" r="2.4" fill="#fff"/>
-      <path d="M96 124 Q112 134 128 124" stroke="#1a1a1a" stroke-width="3" fill="none" stroke-linecap="round"/>
+    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <polygon fill="#8B1A1A" points="100,8 110,45 131,14 128,51 159,30 143,64 180,54 153,81 191,84 156,100 191,116 153,119 180,146 143,136 159,170 128,149 131,186 110,155 100,192 90,155 69,186 72,149 41,170 57,136 20,146 47,119 9,116 44,100 9,84 47,81 20,54 57,64 41,30 72,51 69,14 90,45"/>
+      <ellipse cx="80" cy="96" rx="16" ry="19" fill="#fff"/>
+      <ellipse cx="120" cy="96" rx="16" ry="19" fill="#fff"/>
+      <ellipse cx="83" cy="100" rx="9" ry="11" fill="#1a1a1a"/>
+      <ellipse cx="123" cy="100" rx="9" ry="11" fill="#1a1a1a"/>
+      <circle cx="78" cy="93" r="3.5" fill="#fff"/>
+      <circle cx="118" cy="93" r="3.5" fill="#fff"/>
     </svg>
   </div>
-  <div class="tag">i-waf · challenge</div>
-  <div class="prompt">$ ./verify --browser</div>
+  <div class="badge"><span class="dot"></span>security check</div>
   <h1>Checking your browser<span class="caret"></span></h1>
   <p class="sub">A one-time browser proof is required before you continue.<br>This usually takes less than a second.</p>
 
@@ -275,7 +176,7 @@ r##"<!doctype html>
 
   <div class="foot">
     <span>ref · <code>{request_id}</code></span>
-    <span class="brand"><b>I</b><span class="sep">-</span>Waf<span class="dot">·</span><a href="https://t.me/l7fuck" target="_blank" rel="noopener">@l7fuck</a></span>
+    <span class="brand">2t1 Protection</span>
   </div>
 </div>
 <script>

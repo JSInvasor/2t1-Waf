@@ -121,43 +121,58 @@ impl Bic {
 r##"<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Verifying…</title>
+<title>Security Check · 2t1</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400&family=Outfit:wght@300;400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
-  :root{{--bg:#f4f3ee;--paper:#fafaf6;--ink:#111;--muted:#8b8a84;--hair:rgba(17,17,17,.12);}}
-  *{{box-sizing:border-box}}html,body{{margin:0;padding:0;height:100%}}
+  :root{{--bg:#0f0f0f;--paper:#181818;--ink:#e8e8e8;--ink2:#fff;--muted:#6b6b6b;--accent:#8B1A1A;--accent2:#a82020;--hair:rgba(255,255,255,.08);--glow:rgba(139,26,26,.15);}}
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  html,body{{height:100%}}
   body{{background:var(--bg);color:var(--ink);font-family:'JetBrains Mono',ui-monospace,monospace;font-size:13px;display:grid;place-items:center;-webkit-font-smoothing:antialiased;overflow:hidden}}
-  body::before{{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 20% 10%,rgba(17,17,17,.025),transparent 40%),radial-gradient(circle at 80% 80%,rgba(17,17,17,.02),transparent 50%)}}
-  .box{{width:min(380px,92vw);background:var(--paper);border:1px solid var(--hair);border-radius:10px;padding:24px 28px;position:relative;z-index:2;box-shadow:0 8px 24px rgba(17,17,17,.05)}}
-  .tag{{font-family:'Outfit',sans-serif;font-weight:400;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}}
-  h1{{font-family:'Outfit',sans-serif;font-weight:300;font-size:15px;margin:0 0 6px}}
-  .caret{{display:inline-block;width:1.5px;height:.95em;background:var(--ink);margin-left:4px;vertical-align:text-bottom;color:transparent;animation:b 1.1s steps(2) infinite}}
+  body::before{{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse 600px 400px at 50% 30%,var(--glow),transparent)}}
+  .card{{width:min(400px,92vw);background:var(--paper);border:1px solid var(--hair);border-radius:16px;padding:30px 32px;position:relative;z-index:2;box-shadow:0 20px 60px rgba(0,0,0,.4),0 0 0 1px rgba(255,255,255,.03) inset}}
+  .logo{{width:56px;height:56px;margin:0 auto 16px}}
+  .logo svg{{width:100%;height:100%;filter:drop-shadow(0 4px 12px rgba(139,26,26,.3))}}
+  .badge{{display:inline-flex;align-items:center;gap:6px;font-family:'Outfit',sans-serif;font-weight:500;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent2);background:rgba(139,26,26,.1);border:1px solid rgba(139,26,26,.15);padding:4px 12px;border-radius:20px;margin-bottom:14px}}
+  .badge .dot{{width:6px;height:6px;border-radius:50%;background:var(--accent2);animation:pulse 2s ease infinite}}
+  @keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:.4}}}}
+  h1{{font-family:'Outfit',sans-serif;font-weight:400;font-size:17px;margin:0 0 6px;color:var(--ink2);text-align:center}}
+  .caret{{display:inline-block;width:1.5px;height:.95em;background:var(--accent2);margin-left:4px;vertical-align:text-bottom;color:transparent;animation:b 1.1s steps(2) infinite}}
   @keyframes b{{50%{{opacity:0}}}}
-  .sub{{font-family:'Outfit',sans-serif;font-weight:300;color:var(--muted);margin:8px 0 14px;font-size:12px}}
-  .bar{{height:2px;background:rgba(17,17,17,.08);border-radius:999px;overflow:hidden}}
-  .bar>div{{height:100%;width:0;background:var(--ink);transition:width .15s ease}}
-  .foot{{margin-top:14px;display:flex;justify-content:space-between;font-family:'Outfit',sans-serif;font-weight:300;font-size:10.5px;color:var(--muted)}}
-  code{{background:rgba(17,17,17,.04);padding:1px 5px;border-radius:3px;color:var(--ink);font-size:10px}}
+  .sub{{font-family:'Outfit',sans-serif;font-weight:300;color:var(--muted);margin:6px 0 16px;font-size:12px;text-align:center}}
+  .bar{{height:3px;background:rgba(255,255,255,.06);border-radius:999px;overflow:hidden}}
+  .bar>div{{height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .15s ease}}
+  .foot{{margin-top:16px;display:flex;justify-content:space-between;font-family:'Outfit',sans-serif;font-weight:300;font-size:10.5px;color:var(--muted)}}
+  code{{background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px;color:var(--ink);font-size:10px}}
+  .brand{{font-weight:500;color:var(--accent2);letter-spacing:.04em}}
 </style></head><body>
-<div class="box">
-  <div class="tag">i-waf · integrity</div>
+<div class="card">
+  <div class="logo">
+    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <polygon fill="#8B1A1A" points="100,8 110,45 131,14 128,51 159,30 143,64 180,54 153,81 191,84 156,100 191,116 153,119 180,146 143,136 159,170 128,149 131,186 110,155 100,192 90,155 69,186 72,149 41,170 57,136 20,146 47,119 9,116 44,100 9,84 47,81 20,54 57,64 41,30 72,51 69,14 90,45"/>
+      <ellipse cx="80" cy="96" rx="16" ry="19" fill="#fff"/>
+      <ellipse cx="120" cy="96" rx="16" ry="19" fill="#fff"/>
+      <ellipse cx="83" cy="100" rx="9" ry="11" fill="#1a1a1a"/>
+      <ellipse cx="123" cy="100" rx="9" ry="11" fill="#1a1a1a"/>
+      <circle cx="78" cy="93" r="3.5" fill="#fff"/>
+      <circle cx="118" cy="93" r="3.5" fill="#fff"/>
+    </svg>
+  </div>
+  <div class="badge"><span class="dot"></span>integrity check</div>
   <h1>Verifying browser<span class="caret"></span></h1>
   <p class="sub">One moment — silent integrity check (no captcha).</p>
   <div class="bar"><div id="p"></div></div>
-  <div class="foot"><span>ref · <code>{request_id}</code></span><span>I-Waf</span></div>
+  <div class="foot"><span>ref · <code>{request_id}</code></span><span class="brand">2t1 Protection</span></div>
 </div>
 <script>
 (async () => {{
   const C="{challenge}", E={expires_at}, S="{signature}", T="{original_safe}";
   const bar=document.getElementById("p");
-  // Quick integrity probe: features that headless minimal HTTP libs lack.
   const probe = !!(window.crypto && crypto.subtle && navigator && document.body
                    && new Date().getTimezoneOffset !== undefined);
   bar.style.width="40%";
   if (!probe) {{ document.querySelector("h1").textContent="Browser unsupported"; return; }}
-  // Compute SHA-256(challenge + "2t1bic"), keep first 16 hex chars.
   const enc=new TextEncoder();
   const buf=await crypto.subtle.digest("SHA-256", enc.encode(C+"2t1bic"));
   const hex=Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,"0")).join("");

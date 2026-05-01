@@ -173,42 +173,56 @@ fn urlenc(s: &str) -> String {
 pub fn render_page(provider: Provider, site_key: &str, request_id: &str, original: &str) -> String {
     let original_safe: String = original.chars()
         .filter(|c| !c.is_control() && *c != '"' && *c != '\'').collect();
-    let provider_label = match provider {
-        Provider::Turnstile => "Turnstile",
-        Provider::Hcaptcha  => "hCaptcha",
-    };
     format!(
 r##"<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Verifying browser</title>
+<title>Security Check · 2t1</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Outfit:wght@200;300;400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Outfit:wght@200;300;400;500;600&display=swap" rel="stylesheet">
 <script src="{script_src}" async defer></script>
 <style>
-  :root{{--bg:#f4f3ee;--paper:#fafaf6;--ink:#111;--muted:#8b8a84;--hair:rgba(17,17,17,.12);}}
-  *{{box-sizing:border-box}}html,body{{margin:0;padding:0;height:100%}}
-  body{{background:var(--bg);color:var(--ink);font-family:'JetBrains Mono',monospace;font-size:13px;display:grid;place-items:center;-webkit-font-smoothing:antialiased;overflow:hidden}}
-  body::before{{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(circle at 20% 10%,rgba(17,17,17,.025),transparent 40%),radial-gradient(circle at 80% 80%,rgba(17,17,17,.02),transparent 50%)}}
-  .box{{width:min(420px,92vw);background:var(--paper);border:1px solid var(--hair);border-radius:10px;padding:30px 34px;position:relative;z-index:2;box-shadow:0 10px 30px rgba(17,17,17,.06);text-align:center}}
-  .tag{{font-family:'Outfit',sans-serif;font-weight:400;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:12px}}
-  h1{{font-family:'Outfit',sans-serif;font-weight:300;font-size:18px;margin:0 0 4px}}
-  .sub{{font-family:'Outfit',sans-serif;font-weight:300;color:var(--muted);margin:8px 0 22px;font-size:13px;line-height:1.6}}
-  .widget{{margin:18px auto;display:inline-block;min-height:65px}}
-  .foot{{margin-top:22px;padding-top:14px;border-top:1px dashed rgba(17,17,17,.07);display:flex;justify-content:space-between;align-items:center;font-family:'Outfit',sans-serif;font-weight:300;font-size:11px;color:var(--muted)}}
-  .foot code{{background:rgba(17,17,17,.04);padding:2px 6px;border-radius:3px;color:var(--ink);font-size:10.5px}}
-  .err{{color:#b3203a;margin-top:12px;font-size:12px}}
+  :root{{--bg:#0f0f0f;--paper:#181818;--ink:#e8e8e8;--ink2:#fff;--muted:#6b6b6b;--accent:#8B1A1A;--accent2:#a82020;--hair:rgba(255,255,255,.08);--glow:rgba(139,26,26,.15);}}
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  html,body{{height:100%}}
+  body{{background:var(--bg);color:var(--ink);font-family:'JetBrains Mono',ui-monospace,monospace;font-size:13px;display:grid;place-items:center;-webkit-font-smoothing:antialiased;overflow:hidden}}
+  body::before{{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse 600px 400px at 50% 30%,var(--glow),transparent)}}
+  .card{{width:min(440px,92vw);background:var(--paper);border:1px solid var(--hair);border-radius:16px;padding:36px 38px;position:relative;z-index:2;box-shadow:0 20px 60px rgba(0,0,0,.4),0 0 0 1px rgba(255,255,255,.03) inset;text-align:center}}
+  .logo{{margin:0 auto 20px;width:72px;height:72px}}
+  .logo svg{{width:100%;height:100%;filter:drop-shadow(0 4px 12px rgba(139,26,26,.3))}}
+  .badge{{display:inline-flex;align-items:center;gap:6px;font-family:'Outfit',sans-serif;font-weight:500;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent2);background:rgba(139,26,26,.1);border:1px solid rgba(139,26,26,.15);padding:4px 12px;border-radius:20px;margin-bottom:18px}}
+  .badge .dot{{width:6px;height:6px;border-radius:50%;background:var(--accent2);animation:pulse 2s ease infinite}}
+  @keyframes pulse{{0%,100%{{opacity:1}}50%{{opacity:.4}}}}
+  h1{{font-family:'Outfit',sans-serif;font-weight:400;font-size:20px;margin:0 0 6px;color:var(--ink2)}}
+  .sub{{font-family:'Outfit',sans-serif;font-weight:300;color:var(--muted);margin:6px 0 24px;font-size:13px;line-height:1.6}}
+  .captcha-wrap{{margin:0 auto;display:inline-block;border-radius:12px;overflow:hidden;max-height:70px;position:relative}}
+  .captcha-wrap [class*="turnstile"],.captcha-wrap [class*="captcha"]{{transform:scale(1.02);transform-origin:top center}}
+  .foot{{margin-top:24px;padding-top:16px;border-top:1px solid var(--hair);display:flex;justify-content:space-between;align-items:center;font-family:'Outfit',sans-serif;font-weight:300;font-size:11px;color:var(--muted)}}
+  .foot code{{background:rgba(255,255,255,.06);padding:2px 8px;border-radius:4px;color:var(--ink);font-size:10px;font-family:'JetBrains Mono',monospace}}
+  .brand{{font-weight:500;color:var(--accent2);letter-spacing:.04em}}
+  .err{{color:#e84057;margin-top:14px;font-size:12px;font-family:'Outfit',sans-serif}}
 </style></head><body>
-<div class="box">
-  <div class="tag">i-waf · {provider_label} verification</div>
-  <h1>Confirm you're human</h1>
-  <p class="sub">A one-time check is required before you can continue.<br>This usually takes a couple of seconds.</p>
+<div class="card">
+  <div class="logo">
+    <svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <polygon fill="#8B1A1A" points="100,8 110,45 131,14 128,51 159,30 143,64 180,54 153,81 191,84 156,100 191,116 153,119 180,146 143,136 159,170 128,149 131,186 110,155 100,192 90,155 69,186 72,149 41,170 57,136 20,146 47,119 9,116 44,100 9,84 47,81 20,54 57,64 41,30 72,51 69,14 90,45"/>
+      <ellipse cx="80" cy="96" rx="16" ry="19" fill="#fff"/>
+      <ellipse cx="120" cy="96" rx="16" ry="19" fill="#fff"/>
+      <ellipse cx="83" cy="100" rx="9" ry="11" fill="#1a1a1a"/>
+      <ellipse cx="123" cy="100" rx="9" ry="11" fill="#1a1a1a"/>
+      <circle cx="78" cy="93" r="3.5" fill="#fff"/>
+      <circle cx="118" cy="93" r="3.5" fill="#fff"/>
+    </svg>
+  </div>
+  <div class="badge"><span class="dot"></span>security check</div>
+  <h1>Verify you're human</h1>
+  <p class="sub">Complete the verification below to continue.<br>This usually takes a couple of seconds.</p>
   <form id="f" method="POST" action="/__2t1/turnstile-verify">
-    <div class="widget {widget_class}" data-sitekey="{site_key}" data-callback="onCaptcha"></div>
+    <div class="captcha-wrap"><div class="{widget_class}" data-sitekey="{site_key}" data-callback="onCaptcha" data-theme="dark"></div></div>
     <p class="err" id="err" hidden>Verification failed. Please refresh and try again.</p>
   </form>
-  <div class="foot"><span>ref · <code>{request_id}</code></span><span>I-Waf</span></div>
+  <div class="foot"><span>ref · <code>{request_id}</code></span><span class="brand">2t1 Protection</span></div>
 </div>
 <script>
   const T = "{original_safe}";
@@ -228,7 +242,6 @@ r##"<!doctype html>
 "##,
         script_src = provider.script_src(),
         widget_class = provider.widget_class(),
-        provider_label = provider_label,
         site_key = site_key,
         request_id = request_id,
         original_safe = original_safe,
