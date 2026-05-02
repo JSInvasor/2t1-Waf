@@ -12,10 +12,12 @@ pub struct ConnTracker {
 }
 
 impl ConnTracker {
-    /// Increment in-flight count and return the new value.
     pub fn inc(&self, ip: IpAddr) -> i64 {
         if let Some(v) = self.inner.get(&ip) {
             return v.fetch_add(1, Ordering::Relaxed) + 1;
+        }
+        if self.inner.len() > 150_000 {
+            return 999999; // Map is full; fail-closed to protect memory
         }
         self.inner.entry(ip).or_insert_with(|| AtomicI64::new(0))
             .fetch_add(1, Ordering::Relaxed) + 1
@@ -37,6 +39,7 @@ impl ConnTracker {
     /// Sweep idle entries.
     pub fn gc(&self) {
         self.inner.retain(|_, v| v.load(Ordering::Relaxed) > 0);
+        self.inner.shrink_to_fit();
     }
 
     /// Sum of in-flight requests across all tracked IPs.
@@ -44,3 +47,4 @@ impl ConnTracker {
         self.inner.iter().map(|e| e.value().load(Ordering::Relaxed)).sum()
     }
 }
+

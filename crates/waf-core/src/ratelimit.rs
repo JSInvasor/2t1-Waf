@@ -107,6 +107,9 @@ impl RateLimiter {
     }
 
     fn bump(&self, key: &str, now: u64) -> u32 {
+        if !self.counters.contains_key(key) && self.counters.len() > 150_000 {
+            return 999999; // Return high count to fail-closed under memory pressure
+        }
         let entry = self.counters
             .entry(key.to_string())
             .or_insert_with(|| Arc::new(Mutex::new(Counter::default())))
@@ -122,6 +125,7 @@ impl RateLimiter {
             let c = v.lock();
             now.saturating_sub(c.head_secs) < max_age_secs
         });
+        self.counters.shrink_to_fit();
     }
 }
 

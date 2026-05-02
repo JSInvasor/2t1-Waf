@@ -117,6 +117,9 @@ impl Reputations {
     pub fn record_offence(&self, ip: IpAddr) -> bool {
         if self.allow.iter().any(|n| n.contains(&ip)) { return false; }
         let now = now_secs();
+        if !self.state.contains_key(&ip) && self.state.len() > 150_000 {
+            return false; // Map full, refuse to track new offenders to prevent OOM
+        }
         let entry = self.state.entry(ip).or_insert_with(|| Mutex::new(HitState::default()));
         let mut s = entry.lock();
         if s.first_hit == 0 || now.saturating_sub(s.first_hit) > self.window_secs {
@@ -139,6 +142,9 @@ impl Reputations {
     pub fn force_ban(&self, ip: IpAddr, secs: u64) -> bool {
         if self.allow.iter().any(|n| n.contains(&ip)) { return false; }
         let now = now_secs();
+        if !self.state.contains_key(&ip) && self.state.len() > 150_000 {
+            return false; // Map full
+        }
         let entry = self.state.entry(ip).or_insert_with(|| Mutex::new(HitState::default()));
         let mut s = entry.lock();
         let until = now + secs;
@@ -165,6 +171,7 @@ impl Reputations {
             // Keep entries that are still banned or had recent activity.
             s.ban_until > now || now.saturating_sub(s.first_hit) < self.window_secs * 2
         });
+        self.state.shrink_to_fit();
     }
 
     /// Snapshot of currently banned IPs for the dashboard.
