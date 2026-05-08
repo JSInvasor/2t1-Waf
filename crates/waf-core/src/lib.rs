@@ -17,6 +17,7 @@ pub mod engine;
 pub mod events;
 pub mod fingerprint;
 pub mod goodbot;
+pub mod h2_anomaly;
 pub mod honeypots;
 pub mod metrics;
 pub mod ratelimit;
