@@ -272,7 +272,7 @@
     </div>
 
     <div class="card">
-      <div class="card-head"><h3 class="card-title">Heuristic defenses</h3><span class="card-meta mut">9 layers · all hot-toggleable</span></div>
+      <div class="card-head"><h3 class="card-title">Heuristic defenses</h3><span class="card-meta mut">10 layers · all hot-toggleable</span></div>
       <div class="toggles" id="defense-toggles"></div>
       <p class="mut" style="margin-top:14px; font-size:11px; line-height:1.7;">
         <b>Bot score</b> — header completeness, UA / sec-ch-ua consistency, modern browser fingerprints.<br>
@@ -283,7 +283,8 @@
         <b>Replay</b> — same (method+path+UA) hash hammered 25× from one IP in 30s.<br>
         <b>Distributed UA</b> — single User-Agent observed from 8+ distinct IPs in 60s (botnet signature).<br>
         <b>Good-bot whitelist</b> — Googlebot / Bingbot / Yandex / Baidu / Apple / Meta / LinkedIn / Twitter / Discord / DuckDuckGo with reverse-DNS verification. Spoofers add +60 score; first-hit pending bots get a lenient pass.<br>
-        <b>Silent BIC</b> — invisible browser integrity check served before the heavyweight PoW. Real browsers complete a tiny SHA-256 probe in &lt;100 ms and get a HMAC-signed cookie tied to their /24; bots that don't run JS never receive it.
+        <b>Silent BIC</b> — invisible browser integrity check served before the heavyweight PoW. Real browsers complete a tiny SHA-256 probe in &lt;100 ms and get a HMAC-signed cookie tied to their /24; bots that don't run JS never receive it.<br>
+        <b>HTTP/2 anomalies</b> — forbidden hop-by-hop headers (<code>connection</code>, <code>transfer-encoding</code>, <code>upgrade</code>), illegal <code>TE</code> values, missing User-Agent and malformed <code>:path</code> on h2/h3 — all illegal per RFC 9113 §8.2 and typical of floods that don't emulate the protocol.
       </p>
     </div>
 

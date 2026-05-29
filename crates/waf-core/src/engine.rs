@@ -11,7 +11,7 @@ use crate::config::Config;
 use crate::connections::ConnTracker;
 use crate::datacenter;
 use crate::ddos;
-use crate::decision::{Action, Decision, DecisionReason};
+use crate::decision::{Decision, DecisionReason};
 use crate::events::EventLog;
 use crate::goodbot::{GoodBotVerifier, Verdict};
 use crate::honeypots::Honeypots;
@@ -319,6 +319,14 @@ impl Engine {
         // DDoS-flavoured request anomalies.
         if self.runtime.defenses.ddos.load(Ordering::Relaxed) {
             for r in ddos::score(ctx) { decision.add_reason(r); }
+        }
+
+        // HTTP/2 / HTTP/3 protocol-level anomalies. Header shapes that are
+        // merely odd on h1 are outright illegal on h2 (RFC 9113 §8.2) and
+        // almost always indicate a flood toolkit that didn't emulate the
+        // protocol correctly. No-op for HTTP/1.x requests.
+        if self.runtime.defenses.h2.load(Ordering::Relaxed) {
+            for r in crate::h2_anomaly::score(ctx) { decision.add_reason(r); }
         }
 
         // Source IP from a known datacenter / cloud ASN range.
@@ -706,6 +714,33 @@ hmac_secret = "a-very-secret-key-of-some-length"
         let e = quiet_engine();
         e.runtime.add_allow("1.2.3.4").unwrap();
         let d = e.evaluate(&req("/x?id=1' OR 1=1--", "id=1' OR 1=1--"));
+        assert_eq!(d.action, Action::Allow);
+    }
+
+    #[test]
+    fn h2_forbidden_header_blocks() {
+        // The h2_anomaly module must actually be wired into evaluate(): an
+        // HTTP/2 request carrying a forbidden hop-by-hop header (illegal per
+        // RFC 9113 §8.2) scores 70 = block_threshold and must be blocked.
+        let e = quiet_engine();
+        let mut r = req("/x", "");
+        r.http_version = "HTTP/2.0".into();
+        r.headers.insert("connection".into(), "close".into());
+        let d = e.evaluate(&r);
+        assert_eq!(d.action, Action::Block);
+        assert!(d.reasons.iter().any(|x| x.rule_id == "H2-FORBIDDEN-HDR"));
+    }
+
+    #[test]
+    fn h2_check_respects_toggle() {
+        // Same request must pass when the h2 defense is toggled off, proving
+        // the toggle is honoured (and that nothing else flags it).
+        let e = quiet_engine();
+        e.runtime.defenses.h2.store(false, Ordering::Relaxed);
+        let mut r = req("/x", "");
+        r.http_version = "HTTP/2.0".into();
+        r.headers.insert("connection".into(), "close".into());
+        let d = e.evaluate(&r);
         assert_eq!(d.action, Action::Allow);
     }
 }
