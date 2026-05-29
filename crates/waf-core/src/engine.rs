@@ -154,6 +154,25 @@ impl Engine {
         }
     }
 
+    /// PoW difficulty for a freshly issued challenge. Scaled up by one step
+    /// under the heavy UAM levels (High / Extreme) so automated solvers pay
+    /// noticeably more per request during an attack, while a real browser still
+    /// clears it in about a second. Deliberately capped at `base + 1` and an
+    /// absolute ceiling of 5 leading hex zeroes: each extra digit is 16× the
+    /// work, so this is the most we can add without risking a slow mobile
+    /// client timing out — keeping the no-false-positive guarantee even for the
+    /// few genuine visitors who hit a challenge mid-attack. For a strictly
+    /// stronger gate under heavy attack, switch ChallengeMode to the
+    /// interactive captcha, which costs a human nothing.
+    pub fn pow_difficulty_for_uam(&self) -> u8 {
+        let base = self.challenger.base_difficulty();
+        let bump = match self.runtime.uam() {
+            UamLevel::High | UamLevel::Extreme => 1,
+            _ => 0,
+        };
+        base.saturating_add(bump).min(5)
+    }
+
     pub fn evaluate(&self, ctx: &RequestCtx) -> Decision {
         let req_id = ctx.request_id.clone();
         let uam = self.uam_params();
@@ -253,7 +272,7 @@ impl Engine {
             } else if self.runtime.under_attack.load(Ordering::Relaxed) {
                 self.runtime.rpm_under_attack_bps.load(Ordering::Relaxed)
             } else { 10_000 };
-            if let Err(l) = self.rate_limiter.check_scaled(&ctx.client_ip.to_string(), &ctx.path, scale_bps) {
+            if let Err(l) = self.rate_limiter.check_scaled(ctx.client_ip, &ctx.path, scale_bps) {
                 let r = DecisionReason {
                     rule_id: "RL-01".to_string(), category: "rate_limit".to_string(),
                     score: SCORE_RL_HIT,
@@ -309,17 +328,21 @@ impl Engine {
             for r in bot_score::score(ctx) { decision.add_reason(r); }
         }
 
+        // "This is a genuine modern browser navigation or XHR" hint. A real
+        // browser sets the forbidden `sec-fetch-*` headers on every fetch and
+        // always sends `accept-language`; headless flood/scan tooling forges
+        // neither. We use it to suppress the anomaly signals that overlap with
+        // perfectly normal browser behaviour (single-endpoint polling, fixed-
+        // interval timers, popular shared User-Agents, identical repeat
+        // requests) so real users are never caught by them — while the same
+        // signals stay fully active for non-browser clients, and the volume-
+        // based defences (rate limit, subnet, conn-cap, global valve) protect
+        // against floods regardless of how the client presents itself.
+        let browserish = ctx.headers.keys().any(|k| k.starts_with("sec-fetch-"))
+            && ctx.headers.contains_key("accept-language");
+
         // Per-IP behaviour fingerprint (URL diversity, interval regularity, …).
-        // We hand the tracker a "this is a genuine modern browser navigation or
-        // XHR" hint so its most false-positive-prone signals (single-endpoint
-        // polling, fixed-interval timers) don't fire on real single-page apps,
-        // mobile clients, or monitoring agents. A real browser sets the
-        // forbidden `sec-fetch-*` headers on every fetch and always sends
-        // `accept-language`; headless flood tooling forges neither, so flood
-        // detection is unaffected.
         if self.runtime.defenses.behavior.load(Ordering::Relaxed) {
-            let browserish = ctx.headers.keys().any(|k| k.starts_with("sec-fetch-"))
-                && ctx.headers.contains_key("accept-language");
             for r in self.behavior.observe(ctx.client_ip, &ctx.path, &ctx.method, &ctx.user_agent, browserish) {
                 decision.add_reason(r);
             }
@@ -348,15 +371,26 @@ impl Engine {
             for r in self.subnets.observe(ip, rpm, conn) { decision.add_reason(r); }
         }
 
-        // Identical-request replay flood from a single IP.
-        if self.runtime.defenses.replay.load(Ordering::Relaxed) {
+        // Identical-request replay flood from a single IP. Skipped for real
+        // browsers: a legitimate SPA polling one endpoint on a timer produces
+        // the same (method, path, UA) signature repeatedly and would otherwise
+        // be mistaken for a replay flood. Non-browser clients are still
+        // checked, and browserish floods are caught by the rate/conn limits.
+        if self.runtime.defenses.replay.load(Ordering::Relaxed) && !browserish {
             if let Some(r) = self.replay.observe(ip, &ctx.method, &ctx.path, &ctx.user_agent) {
                 decision.add_reason(r);
             }
         }
 
         // Same UA shared by many distinct IPs in a short window (botnet UA).
-        if self.runtime.defenses.dist_ua.load(Ordering::Relaxed) && !ctx.user_agent.is_empty() {
+        // Skipped for real browsers: a popular User-Agent (e.g. the current
+        // Chrome release) is legitimately shared by many visitors at once, so
+        // counting browserish clients here would false-positive on normal
+        // traffic to any busy site. Only non-browser clients sharing a UA —
+        // the actual botnet-toolkit signature — are counted.
+        if self.runtime.defenses.dist_ua.load(Ordering::Relaxed)
+            && !browserish && !ctx.user_agent.is_empty()
+        {
             if let Some(r) = self.dist_ua.observe(ip, &ctx.user_agent) {
                 decision.add_reason(r);
             }

@@ -58,25 +58,39 @@ impl Challenger {
         }
     }
 
-    /// Create a fresh challenge token (called when serving the challenge page).
-    pub fn issue(&self) -> Token {
+    /// The baseline PoW difficulty (leading hex zeroes) from config.
+    pub fn base_difficulty(&self) -> u8 { self.pow_difficulty }
+
+    /// Create a fresh challenge token at the configured baseline difficulty.
+    pub fn issue(&self) -> Token { self.issue_with(self.pow_difficulty) }
+
+    /// Create a fresh challenge token at an explicit difficulty (used to scale
+    /// the cost up under heavy "under attack" levels). The difficulty is part
+    /// of the signed payload, so a client cannot downgrade it: tampering with
+    /// `d` invalidates the signature.
+    pub fn issue_with(&self, difficulty: u8) -> Token {
+        let difficulty = difficulty.clamp(1, 8);
         let now = now_secs();
         let expires_at = now + 120; // 2 minute solve budget
         let mut chal = [0u8; 16];
         getrandom_bytes(&mut chal);
         let challenge = hex::encode(chal);
-        let signature = self.sign(&challenge, expires_at);
-        Token { challenge, expires_at, signature, difficulty: self.pow_difficulty }
+        let signature = self.sign(&challenge, expires_at, difficulty);
+        Token { challenge, expires_at, signature, difficulty }
     }
 
-    /// Verify a `(challenge, nonce, signature, expires_at)` quadruple.
-    pub fn verify(&self, challenge: &str, nonce: &str, signature: &str, expires_at: u64) -> Result<(), ChallengeError> {
+    /// Verify a `(challenge, nonce, signature, expires_at, difficulty)` tuple.
+    /// The difficulty is bound into the signature, so the server enforces
+    /// exactly the difficulty it issued — a client can neither lower it nor
+    /// reuse a nonce mined for an easier challenge.
+    pub fn verify(&self, challenge: &str, nonce: &str, signature: &str, expires_at: u64, difficulty: u8) -> Result<(), ChallengeError> {
         if now_secs() > expires_at { return Err(ChallengeError::Expired); }
-        let expect = self.sign(challenge, expires_at);
+        let difficulty = difficulty.clamp(1, 8);
+        let expect = self.sign(challenge, expires_at, difficulty);
         if !ct_eq(expect.as_bytes(), signature.as_bytes()) {
             return Err(ChallengeError::BadSig);
         }
-        if !verify_pow(challenge, nonce, self.pow_difficulty) {
+        if !verify_pow(challenge, nonce, difficulty) {
             return Err(ChallengeError::BadPow);
         }
         Ok(())
@@ -110,8 +124,8 @@ impl Challenger {
     pub fn cookie_name(&self) -> &str { &self.cookie_name }
     pub fn cookie_ttl(&self) -> u64 { self.cookie_ttl }
 
-    fn sign(&self, challenge: &str, exp: u64) -> String {
-        let payload = format!("{challenge}|{exp}");
+    fn sign(&self, challenge: &str, exp: u64, difficulty: u8) -> String {
+        let payload = format!("{challenge}|{exp}|{difficulty}");
         let mut mac = HmacSha256::new_from_slice(&self.secret).expect("hmac key");
         mac.update(payload.as_bytes());
         URL_SAFE_NO_PAD.encode(mac.finalize().into_bytes())
@@ -202,7 +216,7 @@ r##"<!doctype html>
   const r = await fetch("/__2t1/verify", {{
     method: "POST",
     headers: {{ "content-type": "application/json" }},
-    body: JSON.stringify({{ c: C, n: String(nonce), s: S, e: E }}),
+    body: JSON.stringify({{ c: C, n: String(nonce), s: S, e: E, d: D }}),
     credentials: "same-origin",
   }});
   if (r.ok) {{
@@ -306,6 +320,19 @@ mod tests {
             let cand = n.to_string();
             if verify_pow(&t.challenge, &cand, t.difficulty) { nonce = cand; break; }
         }
-        c.verify(&t.challenge, &nonce, &t.signature, t.expires_at).unwrap();
+        c.verify(&t.challenge, &nonce, &t.signature, t.expires_at, t.difficulty).unwrap();
+    }
+
+    // The difficulty is signed: a client cannot present a valid token while
+    // claiming an easier difficulty than the one that was issued.
+    #[test]
+    fn difficulty_is_bound_to_signature() {
+        let c = Challenger::new("a-very-secret-key-of-some-length", "ck", 60, 4);
+        let t = c.issue_with(4);
+        // Any nonce will do — the signature check must fail before PoW because
+        // difficulty=1 was not what we signed for.
+        let err = c.verify(&t.challenge, "0", &t.signature, t.expires_at, 1);
+        assert!(matches!(err, Err(ChallengeError::BadSig)),
+            "claiming a different difficulty must break the signature");
     }
 }

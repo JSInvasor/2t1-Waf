@@ -352,8 +352,9 @@ async fn serve_challenge(session: &mut Session, engine: &Engine, d: &Decision) {
         // a broken captcha widget.
     }
 
-    // Fall through to the heavyweight PoW challenge.
-    let token = engine.challenger.issue();
+    // Fall through to the heavyweight PoW challenge. The difficulty scales
+    // up under heavy UAM levels (and is bound into the token signature).
+    let token = engine.challenger.issue_with(engine.pow_difficulty_for_uam());
     let body = engine.challenger.render_page(&token, &d.request_id);
     let extra: Vec<(&str, &str)> = vec![
         ("cache-control", "no-store, private"),
@@ -441,10 +442,10 @@ async fn handle_verify(session: &mut Session, engine: &Engine) {
         }
     }
     #[derive(serde::Deserialize)]
-    struct Submit { c: String, n: String, s: String, e: u64 }
+    struct Submit { c: String, n: String, s: String, e: u64, #[serde(default)] d: u8 }
 
     let ok = serde_json::from_slice::<Submit>(&buf).ok().map(|s| {
-        engine.challenger.verify(&s.c, &s.n, &s.s, s.e).is_ok()
+        engine.challenger.verify(&s.c, &s.n, &s.s, s.e, s.d).is_ok()
     }).unwrap_or(false);
 
     if ok {

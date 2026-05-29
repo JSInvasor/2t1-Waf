@@ -25,6 +25,7 @@ const W_LOW_DIVERSITY:   u32 = 30;
 const W_REGULAR_INTERVAL:u32 = 35;
 const W_METHOD_FLOOD:    u32 = 25;
 const W_UA_CHURN:        u32 = 30;
+const W_SCANNER:         u32 = 40;
 
 #[derive(Default)]
 pub struct BehaviorTracker {
@@ -123,6 +124,20 @@ impl BehaviorTracker {
                 rule_id: "BHV-LOWDIV".to_string(), category: "behavior".to_string(),
                 score: W_LOW_DIVERSITY,
                 detail: format!("{} requests on {} unique paths in window", count, unique_paths),
+            });
+        }
+
+        // High diversity: one IP fanning out across many distinct paths is
+        // directory / endpoint enumeration (gobuster, ffuf, nikto, …). Real
+        // browsers also pull many sub-resource paths on a normal page load,
+        // but those carry genuine fetch metadata (browserish) and are exempt;
+        // verified good-bot crawlers are whitelisted upstream of scoring. So
+        // this only fires for non-browser clients enumerating at volume.
+        if !browserish && count >= 30 && unique_paths >= 24 {
+            out.push(DecisionReason {
+                rule_id: "BHV-SCAN".to_string(), category: "behavior".to_string(),
+                score: W_SCANNER,
+                detail: format!("{} distinct paths over {} requests (enumeration)", unique_paths, count),
             });
         }
 
@@ -244,6 +259,30 @@ mod tests {
         }
         assert!(!fired(&last, "BHV-LOWDIV"), "legit SPA polling must not be flagged");
         assert!(!fired(&last, "BHV-REGULAR"), "legit timer polling must not be flagged");
+    }
+
+    // A non-browser client enumerating many distinct paths is a scanner and
+    // must be flagged.
+    #[test]
+    fn nonbrowser_path_enumeration_is_flagged() {
+        let t = BehaviorTracker::default();
+        let mut last = Vec::new();
+        for i in 0..30 {
+            last = t.observe(ip(4), &format!("/admin/{}", i), "GET", "ffuf/2", false);
+        }
+        assert!(fired(&last, "BHV-SCAN"), "directory enumeration must be flagged");
+    }
+
+    // A real browser pulling many sub-resource paths on a page load must not
+    // be mistaken for a scanner.
+    #[test]
+    fn browserish_many_subresources_is_clean() {
+        let t = BehaviorTracker::default();
+        let mut last = Vec::new();
+        for i in 0..30 {
+            last = t.observe(ip(5), &format!("/assets/{}.png", i), "GET", "Mozilla/5.0", true);
+        }
+        assert!(!fired(&last, "BHV-SCAN"), "browser sub-resource fan-out must not be flagged");
     }
 
     // Two or three real users behind one shared/NAT egress IP must not be
