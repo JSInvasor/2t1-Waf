@@ -85,8 +85,35 @@ impl Service for StorageService {
     fn threads(&self) -> Option<usize> { Some(1) }
 }
 
+/// In-flight saturation (percent of `global_inflight_cap`) at or above which
+/// auto-UAM escalates a level even before the block rate climbs. A volumetric
+/// flood drives concurrency up at its very start — well before requests start
+/// getting blocked — so this lets the watchdog react earlier.
+const SAT_ESCALATE_PCT: u32 = 70;
+/// Saturation must fall to or below this (and the block rate must also have
+/// calmed) before auto-UAM de-escalates, so the level never drops while the
+/// process is still under concurrency pressure.
+const SAT_DEESCALATE_PCT: u32 = 25;
+
+/// Pure decision for the auto-UAM watchdog: given the current level and the
+/// two attack signals (blocks/sec and in-flight saturation %), return the next
+/// level. Escalates on EITHER signal; de-escalates only when BOTH have calmed.
+/// Kept pure so the policy is unit-tested without the async service loop.
+fn next_uam_level(cur: u8, bps: u32, sat_pct: u32, escalate_at: u32, de_escalate_at: u32) -> u8 {
+    let hot  = bps >= escalate_at || sat_pct >= SAT_ESCALATE_PCT;
+    let cool = bps <= de_escalate_at && sat_pct <= SAT_DEESCALATE_PCT;
+    if hot && cur < 4 {
+        cur + 1
+    } else if cool && cur > 0 {
+        cur - 1
+    } else {
+        cur
+    }
+}
+
 /// Background loop that adjusts `runtime.uam_level` based on the per-second
-/// block rate. Activated when `runtime.auto_uam_enabled = true`.
+/// block rate and the global in-flight saturation. Activated when
+/// `runtime.auto_uam_enabled = true`.
 pub fn auto_uam_service(engine: Arc<Engine>) -> AutoUamService {
     AutoUamService { engine }
 }
@@ -136,6 +163,18 @@ impl Service for AutoUamService {
                     let delta = now_blocks.saturating_sub(prev_blocks);
                     let bps = (delta / 5) as u32; // blocks per second
                     prev_blocks = now_blocks;
+
+                    // In-flight saturation: share of the global concurrency
+                    // budget currently in use. Rises at the *start* of a flood,
+                    // before blocks accumulate, so it lets auto-UAM react
+                    // earlier. Escalating only forces a recoverable challenge
+                    // for fresh visitors, so a legitimate spike that saturates
+                    // the budget is handled gracefully rather than 503'd.
+                    let cap = self.engine.runtime.global_inflight_cap.load(Ordering::Relaxed);
+                    let sat_pct = if cap > 0 {
+                        ((self.engine.conns.total().max(0) as u64 * 100) / cap as u64) as u32
+                    } else { 0 };
+
                     let now_s = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|d| d.as_secs()).unwrap_or(0);
@@ -147,18 +186,14 @@ impl Service for AutoUamService {
                     let escalate_at = thresh;
                     let de_escalate_at = thresh / 4;
 
-                    let next = if bps >= escalate_at && cur < 4 {
-                        cur + 1
-                    } else if bps <= de_escalate_at && cur > 0 {
-                        cur - 1
-                    } else { cur };
+                    let next = next_uam_level(cur, bps, sat_pct, escalate_at, de_escalate_at);
 
                     if next != cur {
                         self.engine.runtime.uam_level.store(next, Ordering::Relaxed);
                         let _ = self.engine.runtime.persist();
                         last_change = now_s;
-                        tracing::warn!(blocks_per_sec = bps, prev = cur, new = next,
-                            "auto-UAM level changed");
+                        tracing::warn!(blocks_per_sec = bps, inflight_sat_pct = sat_pct,
+                            prev = cur, new = next, "auto-UAM level changed");
                     }
                 }
             }
@@ -633,5 +668,42 @@ async fn stream_events(mut s: TcpStream, engine: Arc<Engine>) -> std::io::Result
         let line = format!("data: {}\n\n", serde_json::to_string(&payload).unwrap_or_default());
         if s.write_all(line.as_bytes()).await.is_err() { return Ok(()); }
         // Heartbeat is implicit because we always send something each second.
+    }
+}
+
+#[cfg(test)]
+mod auto_uam_tests {
+    use super::next_uam_level;
+
+    // With auto_uam_threshold = 50: escalate_at = 50, de_escalate_at = 12.
+    const ESC: u32 = 50;
+    const DEESC: u32 = 12;
+
+    #[test]
+    fn escalates_on_block_rate() {
+        assert_eq!(next_uam_level(0, 60, 0, ESC, DEESC), 1);
+    }
+
+    #[test]
+    fn escalates_on_saturation_before_any_blocks() {
+        // Zero blocks so far, but in-flight is 80% of the cap → still escalate.
+        assert_eq!(next_uam_level(1, 0, 80, ESC, DEESC), 2);
+    }
+
+    #[test]
+    fn holds_level_while_still_saturated() {
+        // Block rate has calmed but the process is still 60% saturated → hold.
+        assert_eq!(next_uam_level(3, 0, 60, ESC, DEESC), 3);
+    }
+
+    #[test]
+    fn deescalates_only_when_both_signals_calm() {
+        assert_eq!(next_uam_level(3, 0, 10, ESC, DEESC), 2);
+    }
+
+    #[test]
+    fn clamps_at_extreme_and_off() {
+        assert_eq!(next_uam_level(4, 9999, 99, ESC, DEESC), 4); // never exceeds Extreme
+        assert_eq!(next_uam_level(0, 0, 0, ESC, DEESC), 0);     // never drops below Off
     }
 }
