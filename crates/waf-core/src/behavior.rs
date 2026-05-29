@@ -19,7 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const WINDOW_SECS:  u64 = 60;
 const PATHS_CAP:    usize = 32;
 const INTERVAL_CAP: usize = 16;
-const UA_CAP:       usize = 4;
+const UA_CAP:       usize = 8;
 
 const W_LOW_DIVERSITY:   u32 = 30;
 const W_REGULAR_INTERVAL:u32 = 35;
@@ -48,7 +48,18 @@ struct State {
 }
 
 impl BehaviorTracker {
-    pub fn observe(&self, ip: IpAddr, path: &str, method: &str, ua: &str) -> Vec<DecisionReason> {
+    /// Record one request and return the behavioural anomaly reasons it tripped.
+    ///
+    /// `browserish` is the engine's "this is a real, modern browser navigation
+    /// or XHR" hint (genuine `sec-fetch-*` + `accept-language`). It exists to
+    /// kill the dominant source of false positives: legitimate single-page
+    /// apps and mobile clients **poll one endpoint on a fixed timer**, which is
+    /// indistinguishable from a flood by the URL-diversity and interval-
+    /// regularity signals alone. Those two signals are therefore only treated
+    /// as abuse for non-browser clients, or — for browser clients — at request
+    /// volumes a human/SPA never legitimately produces. Headless flood scripts
+    /// (python/go/curl) are not `browserish`, so flood detection is unchanged.
+    pub fn observe(&self, ip: IpAddr, path: &str, method: &str, ua: &str, browserish: bool) -> Vec<DecisionReason> {
         let now_ms = now_ms();
         let now_s  = now_ms / 1000;
 
@@ -99,8 +110,15 @@ impl BehaviorTracker {
         let count = s.request_count;
         let unique_paths = s.paths.len() as u32;
 
-        // Low diversity: ≥ 30 requests, < 3 distinct paths.
-        if count >= 30 && unique_paths < 3 {
+        // Low diversity: one endpoint hammered. For a non-browser client this
+        // is a textbook single-target flood. Real browser/XHR traffic *does*
+        // legitimately sit on one endpoint (SPA route, polling widget), so for
+        // browserish clients we only flag it at a volume (≥ 180 req/min, i.e.
+        // sustained ≥ 3 req/s on a single path) that a human or SPA timer never
+        // reaches — and even then it lands as a recoverable challenge, never a
+        // standalone hard block.
+        let (lowdiv_min, lowdiv_paths) = if browserish { (180u32, 2u32) } else { (30u32, 3u32) };
+        if count >= lowdiv_min && unique_paths < lowdiv_paths {
             out.push(DecisionReason {
                 rule_id: "BHV-LOWDIV".to_string(), category: "behavior".to_string(),
                 score: W_LOW_DIVERSITY,
@@ -108,8 +126,12 @@ impl BehaviorTracker {
             });
         }
 
-        // Regular intervals: ≥ 8 samples, std-dev / mean < 0.15.
-        if s.intervals.len() >= 8 {
+        // Regular intervals: ≥ 8 samples, std-dev / mean < 0.15. Perfectly
+        // regular request spacing is the *definition* of a legitimate timer-
+        // driven SPA / mobile / monitoring client, so on its own it is a
+        // notoriously false-positive-prone signal. We only treat it as a bot
+        // tell for clients that don't present genuine browser fetch metadata.
+        if !browserish && s.intervals.len() >= 8 {
             let mean = s.intervals.iter().map(|&v| v as f32).sum::<f32>() / s.intervals.len() as f32;
             if mean > 5.0 {  // ignore micro-burst noise
                 let var = s.intervals.iter()
@@ -126,7 +148,9 @@ impl BehaviorTracker {
             }
         }
 
-        // Method flood: ≥ 25 requests, ≥ 90% are OPTIONS or HEAD.
+        // Method flood: ≥ 25 requests, ≥ 90% are OPTIONS or HEAD. Safe for real
+        // users — browsers never sustain a 90% OPTIONS/HEAD mix — so it stays
+        // on regardless of the browserish hint.
         if count >= 25 {
             let opt = s.methods[5] + s.methods[6];
             if (opt as f32 / count as f32) >= 0.9 {
@@ -139,12 +163,17 @@ impl BehaviorTracker {
             }
         }
 
-        // UA churn: same IP, ≥ 3 distinct UAs in the window.
-        if s.uas.len() >= 3 {
+        // UA churn: a single IP cycling through many User-Agents is botnet-like.
+        // The old "≥ 3 distinct UAs" bar false-positived on shared egress IPs
+        // (CGNAT / mobile carriers / office NAT) where many real users sit
+        // behind one address. Require both a higher distinct-UA count and a
+        // meaningful request volume so genuine NAT browsing stays clear while a
+        // single host rotating UAs to dodge fingerprinting still trips it.
+        if s.uas.len() >= 5 && count >= 20 {
             out.push(DecisionReason {
                 rule_id: "BHV-UA-CHURN".to_string(), category: "behavior".to_string(),
                 score: W_UA_CHURN,
-                detail: format!("{} distinct User-Agents from same IP", s.uas.len()),
+                detail: format!("{} distinct User-Agents from same IP over {} requests", s.uas.len(), count),
             });
         }
 
@@ -176,4 +205,57 @@ fn fnv64(bytes: &[u8]) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
     for &b in bytes { h ^= b as u64; h = h.wrapping_mul(0x100000001b3); }
     h
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::Ipv4Addr;
+
+    fn ip(n: u8) -> IpAddr { IpAddr::V4(Ipv4Addr::new(10, 0, 0, n)) }
+
+    fn fired(rs: &[DecisionReason], id: &str) -> bool {
+        rs.iter().any(|r| r.rule_id == id)
+    }
+
+    // A non-browser flood script hammering one path is a single-target flood
+    // and must be caught. Doubles as a 1:1-counting check: the rule fires at
+    // exactly the 30th request (so each observe counts as exactly one).
+    #[test]
+    fn nonbrowser_single_path_flood_is_flagged() {
+        let t = BehaviorTracker::default();
+        let mut last = Vec::new();
+        for i in 1..=30 {
+            last = t.observe(ip(1), "/api/x", "GET", "curl/8", false);
+            // The 29th request must NOT yet trip BHV-LOWDIV; only the 30th does.
+            if i == 29 { assert!(!fired(&last, "BHV-LOWDIV"), "fired too early — double counting?"); }
+        }
+        assert!(fired(&last, "BHV-LOWDIV"), "single-target flood must be flagged");
+    }
+
+    // A real browser/XHR client polling one endpoint (the canonical false
+    // positive) at the same volume must be left completely alone.
+    #[test]
+    fn browserish_single_path_polling_is_clean() {
+        let t = BehaviorTracker::default();
+        let mut last = Vec::new();
+        for _ in 0..120 {
+            last = t.observe(ip(2), "/api/notifications", "GET", "Mozilla/5.0", true);
+        }
+        assert!(!fired(&last, "BHV-LOWDIV"), "legit SPA polling must not be flagged");
+        assert!(!fired(&last, "BHV-REGULAR"), "legit timer polling must not be flagged");
+    }
+
+    // Two or three real users behind one shared/NAT egress IP must not be
+    // mistaken for a UA-rotating bot.
+    #[test]
+    fn small_ua_churn_behind_nat_is_clean() {
+        let t = BehaviorTracker::default();
+        let uas = ["Mozilla/5.0 A", "Mozilla/5.0 B", "Mozilla/5.0 C"];
+        let mut last = Vec::new();
+        for (i, ua) in uas.iter().cycle().take(15).enumerate() {
+            last = t.observe(ip(3), &format!("/p{}", i % 6), "GET", ua, true);
+        }
+        assert!(!fired(&last, "BHV-UA-CHURN"), "3 UAs from a NAT must not trip churn");
+    }
 }

@@ -310,8 +310,17 @@ impl Engine {
         }
 
         // Per-IP behaviour fingerprint (URL diversity, interval regularity, …).
+        // We hand the tracker a "this is a genuine modern browser navigation or
+        // XHR" hint so its most false-positive-prone signals (single-endpoint
+        // polling, fixed-interval timers) don't fire on real single-page apps,
+        // mobile clients, or monitoring agents. A real browser sets the
+        // forbidden `sec-fetch-*` headers on every fetch and always sends
+        // `accept-language`; headless flood tooling forges neither, so flood
+        // detection is unaffected.
         if self.runtime.defenses.behavior.load(Ordering::Relaxed) {
-            for r in self.behavior.observe(ctx.client_ip, &ctx.path, &ctx.method, &ctx.user_agent) {
+            let browserish = ctx.headers.keys().any(|k| k.starts_with("sec-fetch-"))
+                && ctx.headers.contains_key("accept-language");
+            for r in self.behavior.observe(ctx.client_ip, &ctx.path, &ctx.method, &ctx.user_agent, browserish) {
                 decision.add_reason(r);
             }
         }
