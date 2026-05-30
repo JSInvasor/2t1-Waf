@@ -93,7 +93,6 @@ pub fn verify(ctx: &RequestCtx) -> BrowserVerdict {
     let has_sec_fetch = ctx.headers.keys().any(|k| k.starts_with("sec-fetch-"));
     let has_sec_ch_ua = has("sec-ch-ua");
     let accept = ctx.headers.get("accept").map(|s| s.as_str()).unwrap_or("");
-    let ua_l = ua_raw.to_ascii_lowercase();
 
     // ---- IMPOSSIBLE combinations → Forged (certain) -------------------------
 

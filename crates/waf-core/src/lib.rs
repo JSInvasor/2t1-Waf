@@ -7,6 +7,7 @@
 pub mod behavior;
 pub mod bic;
 pub mod bot_score;
+pub mod browser_check;
 pub mod challenge;
 pub mod config;
 pub mod connections;

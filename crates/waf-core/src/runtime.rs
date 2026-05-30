@@ -43,6 +43,18 @@ pub struct Runtime {
     /// UAM level.
     pub datacenter_block: AtomicBool,
 
+    /// Under-Attack Lockdown: hard default-deny. When active, any request
+    /// that can't positively prove it's a real browser is denied — a forged
+    /// browser fingerprint is blocked outright (403), everything else is
+    /// funnelled into the invisible browser-integrity challenge. Verified
+    /// good bots and clients holding a clearance cookie are exempt.
+    pub lockdown: AtomicBool,
+    /// When ON, lockdown engages automatically the moment auto-UAM escalates
+    /// to High or Extreme — i.e. lockdown turns itself on for the duration of
+    /// a detected attack and off again once the storm passes. The manual
+    /// `lockdown` switch overrides this and stays on regardless of UAM.
+    pub auto_lockdown: AtomicBool,
+
     pub rules: RuleToggles,
     pub defenses: DefenseToggles,
 
@@ -86,6 +98,12 @@ pub struct DefenseToggles {
     /// Silent Browser Integrity Check — lightweight invisible probe
     /// before the full PoW challenge.
     pub bic:       AtomicBool,
+    /// Hard browser-integrity verdict used by the lockdown gate. When OFF,
+    /// lockdown has no hard default-deny effect (it falls back to the normal
+    /// scoring pipeline). When ON (default), lockdown cross-checks every
+    /// browser tell and blocks forged fingerprints / challenges unverified
+    /// clients.
+    pub browser_integrity: AtomicBool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,6 +146,8 @@ pub struct PersistedRuntime {
     #[serde(default)] pub global_inflight_cap: Option<u32>,
     #[serde(default)] pub tarpit_score:        Option<u32>,
     #[serde(default)] pub datacenter_block:    Option<bool>,
+    #[serde(default)] pub lockdown:            Option<bool>,
+    #[serde(default)] pub auto_lockdown:       Option<bool>,
     #[serde(default)] pub allow: Vec<String>,
     #[serde(default)] pub deny: Vec<String>,
     #[serde(default)] pub blocked_countries: Vec<String>,
@@ -162,6 +182,7 @@ pub struct PersistedDefenses {
     #[serde(default)] pub dist_ua:   Option<bool>,
     #[serde(default)] pub goodbot:   Option<bool>,
     #[serde(default)] pub bic:       Option<bool>,
+    #[serde(default)] pub browser_integrity: Option<bool>,
 }
 
 impl Runtime {
@@ -195,7 +216,10 @@ impl Runtime {
                 dist_ua:   AtomicBool::new(true),
                 goodbot:   AtomicBool::new(true),
                 bic:       AtomicBool::new(true),
+                browser_integrity: AtomicBool::new(true),
             },
+            lockdown:      AtomicBool::new(false),
+            auto_lockdown: AtomicBool::new(true),
             subnet_rpm:  AtomicU32::new(2400),
             subnet_conn: AtomicU32::new(800),
             global_inflight_cap: AtomicU32::new(20_000),
@@ -213,6 +237,19 @@ impl Runtime {
     }
 
     pub fn uam(&self) -> UamLevel { UamLevel::from_u8(self.uam_level.load(Ordering::Relaxed)) }
+
+    /// True when Under-Attack Lockdown should be enforced right now: either the
+    /// operator flipped the manual switch, or `auto_lockdown` is enabled and the
+    /// (auto-)UAM level has reached High/Extreme — i.e. an attack is in flight.
+    pub fn lockdown_active(&self) -> bool {
+        if self.lockdown.load(Ordering::Relaxed) {
+            return true;
+        }
+        if self.auto_lockdown.load(Ordering::Relaxed) {
+            return matches!(self.uam(), UamLevel::High | UamLevel::Extreme);
+        }
+        false
+    }
     pub fn challenge_mode_v(&self) -> ChallengeMode {
         ChallengeMode::from_u8(self.challenge_mode.load(Ordering::Relaxed))
     }
@@ -255,6 +292,9 @@ impl Runtime {
         if let Some(v) = p.defenses.dist_ua   { self.defenses.dist_ua.store(v, Ordering::Relaxed); }
         if let Some(v) = p.defenses.goodbot   { self.defenses.goodbot.store(v, Ordering::Relaxed); }
         if let Some(v) = p.defenses.bic       { self.defenses.bic.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.defenses.browser_integrity { self.defenses.browser_integrity.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.lockdown      { self.lockdown.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.auto_lockdown { self.auto_lockdown.store(v, Ordering::Relaxed); }
         if let Some(v) = p.subnet_rpm  { self.subnet_rpm.store(v, Ordering::Relaxed); }
         if let Some(v) = p.subnet_conn { self.subnet_conn.store(v, Ordering::Relaxed); }
         if let Some(v) = p.global_inflight_cap { self.global_inflight_cap.store(v, Ordering::Relaxed); }
@@ -308,7 +348,10 @@ impl Runtime {
                 dist_ua:   Some(self.defenses.dist_ua.load(Ordering::Relaxed)),
                 goodbot:   Some(self.defenses.goodbot.load(Ordering::Relaxed)),
                 bic:       Some(self.defenses.bic.load(Ordering::Relaxed)),
+                browser_integrity: Some(self.defenses.browser_integrity.load(Ordering::Relaxed)),
             },
+            lockdown:      Some(self.lockdown.load(Ordering::Relaxed)),
+            auto_lockdown: Some(self.auto_lockdown.load(Ordering::Relaxed)),
             subnet_rpm:  Some(self.subnet_rpm.load(Ordering::Relaxed)),
             subnet_conn: Some(self.subnet_conn.load(Ordering::Relaxed)),
             global_inflight_cap: Some(self.global_inflight_cap.load(Ordering::Relaxed)),

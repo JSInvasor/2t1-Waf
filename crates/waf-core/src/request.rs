@@ -34,6 +34,15 @@ pub struct RequestCtx {
     /// JA4H fingerprint (HTTP-layer client signature). Pre-computed by the
     /// proxy when building the context so multiple modules can read it cheap.
     pub ja4h: String,
+    /// JA3 TLS ClientHello fingerprint (MD5 hash) as forwarded by a TLS
+    /// front layer in a trusted header (e.g. `cf-ja3-hash` / `x-ja3-hash`).
+    /// Empty when no TLS layer forwards it. Trusted only when the request
+    /// came through a configured trusted proxy hop; otherwise left empty so
+    /// a client can never spoof its own TLS fingerprint.
+    pub ja3: String,
+    /// JA4 TLS ClientHello fingerprint (the newer, structured form) as
+    /// forwarded in `x-ja4`. Same trust rules as `ja3`. Empty when absent.
+    pub ja4: String,
 }
 
 impl RequestCtx {

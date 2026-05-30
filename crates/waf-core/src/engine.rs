@@ -290,8 +290,59 @@ impl Engine {
             return self.finalize(ctx, Decision::allow(req_id));
         }
 
-        // 6. UAM force-challenge for fresh visitors (Medium and up).
-        if uam.force_challenge {
+        // 6. Under-Attack Lockdown — hard default-deny. When lockdown is active
+        //    (operator switch, or auto once auto-UAM reaches High/Extreme) and
+        //    the browser-integrity check is enabled, a request must positively
+        //    prove it is a real, modern browser. The verdict is authoritative
+        //    and replaces the softer UAM force-challenge:
+        //      * Forged   → an *impossible* browser fingerprint → immediate 403,
+        //                   no challenge page is even served, and the offence is
+        //                   recorded toward an auto-ban.
+        //      * Unverified → can't be vouched for → invisible challenge (silent
+        //                   BIC → PoW/Turnstile). A client that already cleared
+        //                   the silent probe (valid BIC cookie) is let through.
+        //      * Trusted  → complete, internally-consistent modern browser →
+        //                   falls through to normal scoring (no forced friction).
+        //    Verified good bots and clients holding a clearance cookie already
+        //    returned above, so they never reach this gate.
+        let browser_integrity = self.runtime.defenses.browser_integrity.load(Ordering::Relaxed);
+        if self.runtime.lockdown_active() && browser_integrity {
+            use crate::browser_check::{verify, BrowserVerdict};
+            match verify(ctx) {
+                BrowserVerdict::Forged(reason) => {
+                    let r = DecisionReason {
+                        rule_id: "LOCKDOWN-FORGED".to_string(), category: "lockdown".to_string(),
+                        score: SCORE_DENY_REPUTATION,
+                        detail: format!("forged browser fingerprint: {reason}"),
+                    };
+                    let new_ban = self.reputations.record_offence(ctx.client_ip);
+                    tracing::warn!(
+                        request_id = %req_id, ip = %ctx.client_ip, path = %ctx.path,
+                        reason = %reason, banned = new_ban,
+                        "lockdown: blocked forged browser fingerprint"
+                    );
+                    return self.finalize(ctx, Decision::block(req_id, 403, r));
+                }
+                BrowserVerdict::Unverified => {
+                    // Already cleared the silent probe this lockdown? Let it on.
+                    let has_bic = self.runtime.defenses.bic.load(Ordering::Relaxed)
+                        && ctx.cookie(self.bic.cookie_name())
+                            .map(|v| self.bic.verify_cookie(v, ctx.client_ip))
+                            .unwrap_or(false);
+                    if !has_bic {
+                        let r = DecisionReason {
+                            rule_id: "LOCKDOWN-UNVERIFIED".to_string(), category: "lockdown".to_string(),
+                            score: 100,
+                            detail: "client could not prove it is a real browser".into(),
+                        };
+                        return self.finalize(ctx, Decision::challenge(req_id, 100, vec![r]));
+                    }
+                }
+                BrowserVerdict::Trusted => { /* fall through to normal scoring */ }
+            }
+        } else if uam.force_challenge {
+            // Softer UAM force-challenge for fresh visitors (Medium and up),
+            // used whenever lockdown is not enforcing the hard verdict.
             let r = DecisionReason {
                 rule_id: "UAM-FORCE".to_string(), category: "anti_ddos".to_string(),
                 score: 100,
@@ -692,8 +743,40 @@ hmac_secret = "a-very-secret-key-of-some-length"
             cookies: HashMap::new(),
             body_preview: vec![], content_length: None, country: None,
             ja4h: String::new(),
+            ja3: String::new(),
+            ja4: String::new(),
         }
     }
+
+    /// Build a request with an explicit User-Agent and header set, for the
+    /// lockdown / browser-integrity gate tests.
+    fn req_h(uri: &str, ua: &str, ver: &str, headers: &[(&str, &str)]) -> RequestCtx {
+        let mut h = HashMap::new();
+        h.insert("host".into(), "h".into());
+        if !ua.is_empty() { h.insert("user-agent".into(), ua.into()); }
+        let mut order: Vec<String> = vec!["host".into(), "user-agent".into()];
+        for (k, v) in headers {
+            h.insert(k.to_string(), v.to_string());
+            order.push(k.to_string());
+        }
+        RequestCtx {
+            request_id: "t".into(),
+            client_ip: IpAddr::from([1, 2, 3, 4]),
+            method: "GET".into(),
+            uri: uri.into(), path: uri.split('?').next().unwrap().into(),
+            query: "".into(), host: "h".into(),
+            user_agent: ua.into(),
+            http_version: ver.into(),
+            headers: h,
+            header_order: order,
+            cookie_order: vec![],
+            cookies: HashMap::new(),
+            body_preview: vec![], content_length: None, country: None,
+            ja4h: String::new(), ja3: String::new(), ja4: String::new(),
+        }
+    }
+
+    const CHROME_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
 
     fn quiet_engine() -> std::sync::Arc<Engine> {
         // Disable the heuristic defenses for tests that exercise just the
@@ -750,5 +833,60 @@ hmac_secret = "a-very-secret-key-of-some-length"
         e.runtime.add_allow("1.2.3.4").unwrap();
         let d = e.evaluate(&req("/x?id=1' OR 1=1--", "id=1' OR 1=1--"));
         assert_eq!(d.action, Action::Allow);
+    }
+
+    #[test]
+    fn lockdown_blocks_forged_browser() {
+        // A Chrome UA with no Client Hints / Fetch-Metadata at all is an
+        // impossible-for-Chrome fingerprint → blocked outright, no challenge.
+        let e = quiet_engine();
+        e.runtime.lockdown.store(true, Ordering::Relaxed);
+        let d = e.evaluate(&req_h("/x", CHROME_UA, "HTTP/2.0", &[("accept", "*/*")]));
+        assert_eq!(d.action, Action::Block);
+        assert_eq!(d.status, 403);
+        assert_eq!(d.reasons.first().map(|r| r.rule_id.as_str()), Some("LOCKDOWN-FORGED"));
+    }
+
+    #[test]
+    fn lockdown_challenges_unverified() {
+        // A bare "Mozilla/5.0" claims to be a browser but presents none of the
+        // tells we need to vouch for it → invisible challenge, not a block.
+        let e = quiet_engine();
+        e.runtime.lockdown.store(true, Ordering::Relaxed);
+        let d = e.evaluate(&req("/x", ""));
+        assert_eq!(d.action, Action::Challenge);
+        assert_eq!(d.reasons.first().map(|r| r.rule_id.as_str()), Some("LOCKDOWN-UNVERIFIED"));
+    }
+
+    #[test]
+    fn lockdown_allows_trusted_browser() {
+        // A complete, internally-consistent Chrome fingerprint sails through
+        // the lockdown gate and (with a benign request) is allowed.
+        let e = quiet_engine();
+        e.runtime.lockdown.store(true, Ordering::Relaxed);
+        let d = e.evaluate(&req_h("/x", CHROME_UA, "HTTP/2.0", &[
+            ("accept", "text/html,application/xhtml+xml,*/*;q=0.8"),
+            ("accept-language", "en-US,en;q=0.9"),
+            ("accept-encoding", "gzip, deflate, br"),
+            ("sec-fetch-dest", "document"),
+            ("sec-fetch-mode", "navigate"),
+            ("sec-ch-ua", "\"Chromium\";v=\"123\", \"Not?A_Brand\";v=\"24\""),
+            ("sec-ch-ua-mobile", "?0"),
+        ]));
+        assert_eq!(d.action, Action::Allow);
+    }
+
+    #[test]
+    fn auto_lockdown_engages_at_high_uam() {
+        // No manual switch, but auto_lockdown (default on) + UAM High means the
+        // hard verdict is enforced: a forged fingerprint is blocked rather than
+        // merely soft force-challenged.
+        let e = quiet_engine();
+        assert!(!e.runtime.lockdown_active());
+        e.runtime.uam_level.store(3, Ordering::Relaxed); // High
+        assert!(e.runtime.lockdown_active());
+        let d = e.evaluate(&req_h("/x", CHROME_UA, "HTTP/2.0", &[("accept", "*/*")]));
+        assert_eq!(d.action, Action::Block);
+        assert_eq!(d.reasons.first().map(|r| r.rule_id.as_str()), Some("LOCKDOWN-FORGED"));
     }
 }

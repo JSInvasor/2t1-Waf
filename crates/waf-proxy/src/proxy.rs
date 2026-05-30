@@ -219,6 +219,27 @@ fn build_request_ctx(session: &Session, engine: &Engine) -> RequestCtx {
         &method, &http_version, &header_order, &headers, &cookie_order, &cookies,
     );
 
+    // JA3/JA4 TLS fingerprints are computed at the TLS-terminating front layer
+    // (e.g. Cloudflare, or a custom TLS sidecar) and forwarded as a header.
+    // They are trusted ONLY when the deployment declares at least one trusted
+    // proxy hop — otherwise a direct client could simply set the header itself
+    // and forge a "browser" TLS fingerprint. With no trusted hop, we leave them
+    // empty and the browser-integrity check falls back to header/hint signals.
+    let (ja3, ja4) = if engine.cfg.server.trusted_proxy_hops > 0 {
+        let pick = |names: &[&str]| -> String {
+            names.iter()
+                .find_map(|n| headers.get(*n))
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default()
+        };
+        (
+            pick(&["cf-ja3-hash", "x-ja3-hash", "x-ja3"]),
+            pick(&["x-ja4", "cf-ja4"]),
+        )
+    } else {
+        (String::new(), String::new())
+    };
+
     RequestCtx {
         request_id: gen_request_id(),
         client_ip,
@@ -230,6 +251,8 @@ fn build_request_ctx(session: &Session, engine: &Engine) -> RequestCtx {
         content_length,
         country: None,
         ja4h,
+        ja3,
+        ja4,
     }
 }
 

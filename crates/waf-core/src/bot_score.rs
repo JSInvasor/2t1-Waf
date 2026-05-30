@@ -113,7 +113,7 @@ mod tests {
             method: method.into(), uri: path.into(), path: path.into(),
             query: "".into(), host: "h".into(), user_agent: ua.into(),
             headers: h, cookies: HashMap::new(),
-            http_version: "HTTP/1.1".into(), header_order: vec![], cookie_order: vec![], body_preview: vec![], content_length: None, country: None, ja4h: String::new(),
+            http_version: "HTTP/1.1".into(), header_order: vec![], cookie_order: vec![], body_preview: vec![], content_length: None, country: None, ja4h: String::new(), ja3: String::new(), ja4: String::new(),
         }
     }
 
