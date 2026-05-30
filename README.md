@@ -9,6 +9,9 @@ Custom L7 Web Application Firewall built on [Pingora](https://github.com/cloudfl
   - Sliding-window rate limiting (per-IP, plus per-route stricter limits).
   - Per-IP concurrent in-flight cap (slowloris / HTTP/2 rapid-reset class).
   - **"Under-attack" mode** — every fresh visitor must pass a JS proof-of-work challenge; the rate limit ceiling is automatically scaled down (configurable basis points).
+  - **Under-Attack Lockdown (hard default-deny)** — the strongest posture. When engaged (manually, or automatically once auto-UAM reaches High/Extreme), every request that can't prove it's a real browser is denied: a **forged** browser fingerprint gets an immediate **403**, and everything else is funnelled into the **invisible** browser-integrity challenge (silent BIC → PoW/Turnstile). Real browsers clear it transparently; curl/python/go/headless flood tooling stays stuck. Verified good bots (Googlebot, …) remain exempt.
+  - **Hard browser-integrity verdict** — cross-checks the User-Agent against Client Hints (`sec-ch-ua*`), Fetch Metadata (`sec-fetch-*`), `Accept*` headers, HTTP version, **and** the JA3/JA4 TLS fingerprint (when a TLS front layer forwards it). A combination that is *impossible* for the claimed browser (e.g. a Chrome UA with no Client Hints, a browser UA over HTTP/1.0, or a browser UA on a scripting-stack TLS fingerprint) is a positive forgery signal — blocked outright under lockdown. Designed to be certain before it blocks, so there are no false positives.
+  - **JA3 / JA4 TLS fingerprinting** — consumed from a TLS-terminating front layer via `cf-ja3-hash` / `x-ja3-hash` / `x-ja4` headers (only trusted when `trusted_proxy_hops > 0`). Combined with the in-house **JA4H** (HTTP-layer) fingerprint to catch toolkits that spoof a real-looking Chrome UA.
   - Auto-ban for IPs that repeatedly trip detection rules.
   - Static + runtime IP allow / deny CIDR lists.
   - GeoIP block list (DB hook reserved).
