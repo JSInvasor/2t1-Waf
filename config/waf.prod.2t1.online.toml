@@ -1,0 +1,106 @@
+# 2t1-Waf — 2t1.online production config
+# Mimari:  Cloudflare  →  WAF (bu süreç, :443 TLS)  →  nginx (127.0.0.1:8080)  →  app
+# Reload:  systemctl reload 2t1-waf   (SIGHUP)
+
+[server]
+# Düz HTTP listener: Cloudflare "Full (strict)" kullanırken gerek yok, ama
+# 80→443 redirect için açık tutuyoruz (redirect_to_https_port aşağıda).
+listen = "0.0.0.0:80"
+# HTTPS listener — WAF burada TLS'i kendi sonlandırır (Cloudflare Origin cert).
+listen_tls = "0.0.0.0:443"
+# Cloudflare Origin CA sertifikası (zincir) + özel anahtarı.
+# Cloudflare panel → SSL/TLS → Origin Server → Create Certificate ile üret,
+# PEM'leri buraya koy ve 2t1waf kullanıcısına okutabilir yap (chmod 0640).
+tls_cert = "/etc/2t1-waf/tls/origin.pem"
+tls_key  = "/etc/2t1-waf/tls/origin.key"
+# 80'e geleni 443'e 301'le (Cloudflare zaten https konuşur, bu güvenlik ağı).
+redirect_to_https_port = 443
+# 0 = CPU çekirdeği kadar worker.
+threads = 0
+# !!! EN KRİTİK AYAR !!!
+# Cloudflare arkasındayız, o yüzden gerçek ziyaretçi IP'si X-Forwarded-For'un
+# en sağındaki Cloudflare-eklediği değerden okunur. CF = tek güvenilir hop = 1.
+# Bunu 0 bırakırsan tüm ziyaretçiler Cloudflare edge IP'sinden geliyormuş gibi
+# görünür ve rate-limit / ban / subnet tamamen çöker.
+trusted_proxy_hops = 1
+
+[upstream]
+# Arkadaki nginx. nginx'i 127.0.0.1:8080'de DÜZ HTTP dinleyecek şekilde ayarla
+# (artık 443'ü WAF aldı). nginx oradan PHP/app'e proxy_pass eder.
+address = "127.0.0.1:8080"
+sni = "2t1.online"
+tls = false
+connect_timeout_ms = 2000
+read_timeout_ms = 30000
+
+[limits]
+max_body_bytes = 1048576
+max_headers = 100
+max_header_value_bytes = 8192
+max_uri_bytes = 8192
+allowed_methods = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+
+[rate_limit]
+enabled = true
+# Site geneli per-IP tavan (dakikada istek). Statik+CDN cache'li bir site için
+# 600 rahat; çok ağ trafikli SPA ise yükseltebilirsin.
+requests_per_minute = 600
+burst = 60
+# Login/giriş uçları için sıkı tavan (brute-force).
+[[rate_limit.routes]]
+pattern = "^/(login|signin|auth|register|api/auth|wp-login|xmlrpc)"
+requests_per_minute = 20
+burst = 5
+
+[reputation]
+allow_cidrs = []
+deny_cidrs = []
+auto_ban_threshold_hits = 5
+auto_ban_window_secs = 60
+auto_ban_duration_secs = 3600
+
+[geoip]
+mmdb_path = ""
+block_countries = []
+suspicious_countries = []
+
+[detection]
+challenge_threshold = 40
+block_threshold = 70
+sqli   = true
+xss    = true
+traversal = true
+cmdi   = true
+lfi    = true
+suspicious_user_agents = [
+    "sqlmap", "nikto", "acunetix", "nessus", "nmap", "masscan", "zgrab",
+    "fuzz", "wpscan", "dirbuster", "gobuster", "feroxbuster", "ffuf",
+    "havij", "burpcollaborator", "qualys", "openvas", "metasploit",
+    "wfuzz", "arachni", "skipfish", "w3af", "vega", "appscan", "netsparker",
+    "rapid7", "shodan", "censys", "zaproxy", "owasp zap", "paros",
+    "python-requests", "go-http-client", "okhttp", "libwww-perl", "lwp::",
+    "curl/7.0", "curl/7.1", "curl/7.2", "wget/1.0", "java/1.4", "ruby",
+    "scrapy", "httrack", "httpie", "phantomjs", "headlesschrome",
+    "siege", "ab/", "wrk/", "vegeta", "gatling", "locust", "hey/",
+    "morfeus", "censysinspect", "expanseinc", "leakix", "internetmeasurement",
+    "muhstik", "mirai", "kinsing", "moobot", "mozi", "gafgyt",
+]
+
+[challenge]
+# !!! MUTLAKA DEĞİŞTİR !!!  Kurulumda şu komutla üret ve buraya yapıştır:
+#   openssl rand -base64 48
+hmac_secret = "CHANGE-ME-openssl-rand-base64-48"
+cookie_name = "__2t1_clearance"
+cookie_ttl_secs = 1800
+pow_difficulty = 4
+
+[logging]
+format = "json"
+level = "info"
+
+[admin]
+# Dashboard yalnızca localhost'ta. Uzaktan erişmek istersen SSH tüneli kullan:
+#   ssh -L 9090:127.0.0.1:9090 kullanici@2t1.online
+# sonra tarayıcıda http://127.0.0.1:9090
+listen = "127.0.0.1:9090"
+runtime_state_path = "/etc/2t1-waf/runtime.json"
