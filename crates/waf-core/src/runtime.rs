@@ -53,6 +53,10 @@ pub struct Runtime {
     /// to High or Extreme — i.e. lockdown turns itself on for the duration of
     /// a detected attack and off again once the storm passes. The manual
     /// `lockdown` switch overrides this and stays on regardless of UAM.
+    ///
+    /// Defaults to OFF. Auto-engaging the hard default-deny on every UAM
+    /// spike wedged the strict browser-integrity gate shut for legitimate
+    /// traffic, so this is now strictly opt-in.
     pub auto_lockdown: AtomicBool,
 
     pub rules: RuleToggles,
@@ -219,7 +223,14 @@ impl Runtime {
                 browser_integrity: AtomicBool::new(true),
             },
             lockdown:      AtomicBool::new(false),
-            auto_lockdown: AtomicBool::new(true),
+            // Default OFF: the hard default-deny lockdown is a deliberate
+            // operator action, not something that should engage on its own.
+            // When it auto-engaged on any UAM High/Extreme spike it turned the
+            // strict browser-integrity gate into a site-wide 403/challenge wall
+            // for legitimate visitors (privacy-extension / mobile / non-TLS-
+            // proxy clients that don't present a full Client-Hints fingerprint),
+            // which read as the site "timing out". Operators opt in explicitly.
+            auto_lockdown: AtomicBool::new(false),
             subnet_rpm:  AtomicU32::new(2400),
             subnet_conn: AtomicU32::new(800),
             global_inflight_cap: AtomicU32::new(20_000),

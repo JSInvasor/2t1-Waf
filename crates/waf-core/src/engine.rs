@@ -877,13 +877,16 @@ hmac_secret = "a-very-secret-key-of-some-length"
     }
 
     #[test]
-    fn auto_lockdown_engages_at_high_uam() {
-        // No manual switch, but auto_lockdown (default on) + UAM High means the
-        // hard verdict is enforced: a forged fingerprint is blocked rather than
-        // merely soft force-challenged.
+    fn auto_lockdown_engages_at_high_uam_when_enabled() {
+        // auto_lockdown is OFF by default (so a UAM spike never silently walls
+        // off the site), but once an operator opts in, UAM High/Extreme enforces
+        // the hard verdict: a forged fingerprint is blocked rather than merely
+        // soft force-challenged.
         let e = quiet_engine();
         assert!(!e.runtime.lockdown_active());
         e.runtime.uam_level.store(3, Ordering::Relaxed); // High
+        assert!(!e.runtime.lockdown_active(), "UAM alone must not engage lockdown");
+        e.runtime.auto_lockdown.store(true, Ordering::Relaxed); // operator opt-in
         assert!(e.runtime.lockdown_active());
         let d = e.evaluate(&req_h("/x", CHROME_UA, "HTTP/2.0", &[("accept", "*/*")]));
         assert_eq!(d.action, Action::Block);
