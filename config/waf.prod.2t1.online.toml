@@ -25,10 +25,10 @@ threads = 0
 trusted_proxy_hops = 1
 
 [upstream]
-# Arkadaki nginx. nginx 2t1.online'ı 127.0.0.1:8081'de DÜZ HTTP dinleyecek
-# (artık 443'ü WAF aldı). Diğer superfan6k siteleri 18080'de, çakışmaz.
+# Arkadaki nginx. nginx 2t1.online'ı 127.0.0.1:8082'de DÜZ HTTP dinleyecek
+# (artık 443'ü WAF aldı). 8081 node'da, 8080/18080 başka vhost'larda — 8082 boş.
 # 2t1.online statik bir site (root /var/www/2t1.online/html), nginx oradan servis eder.
-address = "127.0.0.1:8081"
+address = "127.0.0.1:8082"
 sni = "2t1.online"
 tls = false
 connect_timeout_ms = 2000
