@@ -1,6 +1,17 @@
 # 2t1-Waf — 2t1.online production config
-# Mimari:  Cloudflare  →  WAF (bu süreç, :443 TLS)  →  nginx (127.0.0.1:8080)  →  app
+# Mimari:  Cloudflare  →  WAF (bu süreç, :443 TLS)  →  nginx (127.0.0.1:8082)  →  app
 # Reload:  systemctl reload 2t1-waf   (SIGHUP)
+#
+# ÖNEMLİ — Cloudflare arkasında savunma profili:
+#   trusted_proxy_hops > 0 olduğunda (CF arkasındayız) WAF, header/JS-parmak-izi
+#   katmanlarını (bot_score, behavior, replay, dist_ua, BIC, browser_integrity)
+#   OTOMATİK KAPALI başlatır. Sebep: Cloudflare sec-ch-ua / sec-fetch-* gibi
+#   tarayıcı başlıklarını origin'e iletmediği için bunlar gerçek ziyaretçileri
+#   yanlışlıkla challenge'a sokup siteyi sonsuz döngüde kilitliyordu. Header'dan
+#   bağımsız katmanlar (rate-limit, subnet, honeypot, reputation, kötü-UA listesi,
+#   SQLi/XSS/traversal/cmdi/lfi) AÇIK kalır. Cloudflare zaten kendi bot/DDoS
+#   challenge'ını yapıyor. Bu davranışı runtime.json / dashboard ile geçersiz
+#   kılabilirsin (deploy/runtime.cloudflare.json hazır bir profildir).
 
 [server]
 # Düz HTTP listener: Cloudflare "Full (strict)" kullanırken gerek yok, ama

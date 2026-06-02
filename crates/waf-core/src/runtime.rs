@@ -191,6 +191,22 @@ pub struct PersistedDefenses {
 
 impl Runtime {
     pub fn from_config(cfg: &crate::Config) -> Self {
+        // Behind a trusted reverse proxy (Cloudflare, an upstream CDN, …) the
+        // client's TLS / Client-Hints / Fetch-Metadata tells either never reach
+        // the origin or arrive rewritten. The header-fingerprint defences then
+        // misfire on every genuine visitor: a real Chrome arrives with no
+        // `sec-ch-ua` / `sec-fetch-*`, scores BOT-UA-MISMATCH + BOT-NO-SEC-FETCH
+        // (47 pts > the 40 challenge threshold) and is sent into an endless
+        // challenge/BIC loop that eventually saturates the in-flight cap and
+        // makes the site time out. So when `trusted_proxy_hops > 0` we DEFAULT
+        // these header/JS-fingerprint layers OFF and lean on the volumetric and
+        // payload layers (rate-limit, subnet, honeypot, reputation, bad-UA list,
+        // SQLi/XSS/traversal/cmdi/lfi) which work on any forwarded request. The
+        // fronting proxy already runs its own bot/JS challenge. Direct-to-origin
+        // deployments (hops == 0) keep every layer on. Each toggle is still
+        // individually overridable from the dashboard / runtime.json.
+        let behind_proxy = cfg.server.trusted_proxy_hops > 0;
+        let hdr_default = !behind_proxy;
         Self {
             under_attack: AtomicBool::new(false),
             uam_level: AtomicU8::new(0),
@@ -211,16 +227,20 @@ impl Runtime {
                 rate_limit: AtomicBool::new(cfg.rate_limit.enabled),
             },
             defenses: DefenseToggles {
-                bot_score: AtomicBool::new(true),
-                behavior:  AtomicBool::new(true),
+                // Header / JS-fingerprint layers: default OFF behind a trusted
+                // proxy (see note above), ON for direct-to-origin deployments.
+                bot_score: AtomicBool::new(hdr_default),
+                behavior:  AtomicBool::new(hdr_default),
+                replay:    AtomicBool::new(hdr_default),
+                dist_ua:   AtomicBool::new(hdr_default),
+                bic:       AtomicBool::new(hdr_default),
+                browser_integrity: AtomicBool::new(hdr_default),
+                // Volumetric / payload / reputation layers: always ON — they
+                // operate on any forwarded request regardless of TLS fronting.
                 ddos:      AtomicBool::new(true),
                 honeypots: AtomicBool::new(true),
                 subnet:    AtomicBool::new(true),
-                replay:    AtomicBool::new(true),
-                dist_ua:   AtomicBool::new(true),
                 goodbot:   AtomicBool::new(true),
-                bic:       AtomicBool::new(true),
-                browser_integrity: AtomicBool::new(true),
             },
             lockdown:      AtomicBool::new(false),
             // Default OFF: the hard default-deny lockdown is a deliberate
@@ -452,6 +472,69 @@ fn generate_token() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cfg_with_hops(hops: u8) -> crate::Config {
+        let toml = format!(r##"
+[server]
+listen = "0.0.0.0:8080"
+trusted_proxy_hops = {hops}
+[upstream]
+address = "127.0.0.1:8000"
+[limits]
+max_body_bytes = 1024
+max_headers = 100
+max_header_value_bytes = 8192
+max_uri_bytes = 8192
+allowed_methods = ["GET","POST"]
+[rate_limit]
+enabled = true
+requests_per_minute = 600
+[reputation]
+[detection]
+challenge_threshold = 40
+block_threshold = 70
+[challenge]
+hmac_secret = "a-very-secret-key-of-some-length"
+"##);
+        toml::from_str(&toml).unwrap()
+    }
+
+    // Direct-to-origin (no trusted proxy): every header/JS-fingerprint defence
+    // stays ON, since the real client tells reach the origin intact.
+    #[test]
+    fn direct_origin_keeps_header_defenses_on() {
+        let rt = Runtime::from_config(&cfg_with_hops(0));
+        assert!(rt.defenses.bot_score.load(Ordering::Relaxed));
+        assert!(rt.defenses.behavior.load(Ordering::Relaxed));
+        assert!(rt.defenses.bic.load(Ordering::Relaxed));
+        assert!(rt.defenses.browser_integrity.load(Ordering::Relaxed));
+        assert!(rt.defenses.replay.load(Ordering::Relaxed));
+        assert!(rt.defenses.dist_ua.load(Ordering::Relaxed));
+    }
+
+    // Behind a trusted proxy (Cloudflare): header/JS-fingerprint defences
+    // default OFF so real visitors aren't false-challenged into a loop, while
+    // the volumetric / payload / reputation layers stay ON.
+    #[test]
+    fn behind_proxy_disables_header_defenses_keeps_volumetric() {
+        let rt = Runtime::from_config(&cfg_with_hops(1));
+        // header/JS-fingerprint — OFF
+        assert!(!rt.defenses.bot_score.load(Ordering::Relaxed));
+        assert!(!rt.defenses.behavior.load(Ordering::Relaxed));
+        assert!(!rt.defenses.bic.load(Ordering::Relaxed));
+        assert!(!rt.defenses.browser_integrity.load(Ordering::Relaxed));
+        assert!(!rt.defenses.replay.load(Ordering::Relaxed));
+        assert!(!rt.defenses.dist_ua.load(Ordering::Relaxed));
+        // volumetric / payload / reputation — still ON
+        assert!(rt.defenses.ddos.load(Ordering::Relaxed));
+        assert!(rt.defenses.honeypots.load(Ordering::Relaxed));
+        assert!(rt.defenses.subnet.load(Ordering::Relaxed));
+        assert!(rt.defenses.goodbot.load(Ordering::Relaxed));
+        assert!(rt.rules.sqli.load(Ordering::Relaxed));
+        assert!(rt.rules.rate_limit.load(Ordering::Relaxed));
+        // lockdown never self-engages
+        assert!(!rt.lockdown_active());
+    }
 
     #[test]
     fn cidr_parse_bare_ip() {

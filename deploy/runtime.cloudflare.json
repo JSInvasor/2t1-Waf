@@ -1,0 +1,43 @@
+{
+  "_comment": "Cloudflare arkasinda GUVENLI profil (CF -> WAF -> nginx). Header-tabanli challenge (bot_score/BIC/browser_integrity/behavior/replay/dist_ua) KAPALI: Cloudflare sec-ch-ua / sec-fetch-* basliklarini origin'e iletmedigi icin bunlar gercek ziyaretcileri yanlislikla challenge'a sokup siteyi kilitliyordu. Header'dan BAGIMSIZ, gercek deger katan katmanlar ACIK: rate-limit, subnet flood, honeypot, reputation/auto-ban, kotu-UA listesi ve SQLi/XSS/traversal/cmdi/lfi kurallari. Cloudflare zaten kendi bot/DDoS challenge'ini yapiyor. Bu dosyayi /etc/2t1-waf/runtime.json olarak koyup servisi restart et.",
+  "under_attack": false,
+  "uam_level": 0,
+  "challenge_mode": 0,
+  "auto_uam_enabled": false,
+  "auto_uam_threshold": 50,
+  "challenge_threshold": 40,
+  "block_threshold": 70,
+  "max_concurrent_per_ip": 200,
+  "rpm_under_attack_bps": 2000,
+  "lockdown": false,
+  "auto_lockdown": false,
+  "subnet_rpm": 2400,
+  "subnet_conn": 800,
+  "global_inflight_cap": 20000,
+  "tarpit_score": 150,
+  "datacenter_block": false,
+  "allow": [],
+  "deny": [],
+  "blocked_countries": [],
+  "rules": {
+    "sqli": true,
+    "xss": true,
+    "traversal": true,
+    "cmdi": true,
+    "lfi": true,
+    "bot_ua": true,
+    "rate_limit": true
+  },
+  "defenses": {
+    "bot_score": false,
+    "behavior": false,
+    "ddos": true,
+    "honeypots": true,
+    "subnet": true,
+    "replay": false,
+    "dist_ua": false,
+    "goodbot": true,
+    "bic": false,
+    "browser_integrity": false
+  }
+}
