@@ -1,0 +1,67 @@
+# 2t1.online — WAF KAPALI / doğrudan nginx (Cloudflare → nginx:443 → site)
+#
+# Bu config WAF'ı yoldan çıkardığında devreye girer:
+#
+#     İnternet → Cloudflare (proxy/turuncu bulut)
+#              → nginx (:443, TLS'i BURADA sonlandırır — Cloudflare Origin cert)
+#              → statik site (root /var/www/2t1.online/html)
+#
+# WAF varken nginx 127.0.0.1:8082'de düz HTTP dinliyordu ve 443'ü WAF alıyordu.
+# WAF'ı kapatınca 443'ü tekrar nginx'e veriyoruz. Cloudflare "Full (strict)"
+# kullandığı için nginx'in gerçek bir sertifika sunması gerekir — aynı
+# Cloudflare Origin sertifikasını kullanıyoruz (deploy/disable-waf.sh bunu
+# /etc/2t1-waf/tls'ten /etc/ssl/2t1.online'a kopyalar).
+#
+# deploy/disable-waf.sh bu şablonu doldurup kurar; elle de kullanabilirsin.
+
+# --- Cloudflare gerçek-IP geri kazanımı --------------------------------------
+# WAF yokken Cloudflare doğrudan nginx'e bağlanır; gerçek ziyaretçi IP'si
+# CF-Connecting-IP başlığındadır. disable-waf.sh, Cloudflare IP aralıklarını
+# /etc/nginx/conf.d/cloudflare-realip.conf dosyasına yazar (set_real_ip_from ...).
+# O dosya yoksa log'larda Cloudflare edge IP'leri görünür (güvenlik değil, sadece log).
+
+# 80 → 443 yönlendirme (Cloudflare zaten https konuşur, bu güvenlik ağı).
+server {
+    listen 80;
+    listen [::]:80;
+    server_name 2t1.online www.2t1.online;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name 2t1.online www.2t1.online;
+
+    # Cloudflare Origin sertifikası (disable-waf.sh buraya kopyalar).
+    ssl_certificate     /etc/ssl/2t1.online/origin.pem;
+    ssl_certificate_key /etc/ssl/2t1.online/origin.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+
+    # Statik site kökü. Kendi uygulaman varsa bu bloğu proxy_pass ile değiştir.
+    root  /var/www/2t1.online/html;
+    index index.html index.htm;
+
+    client_max_body_size 1m;
+
+    access_log /var/log/nginx/2t1.access.log;
+    error_log  /var/log/nginx/2t1.error.log;
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    # --- Uygulamaya proxy gerekiyorsa (statik değilse) yukarıdaki location yerine:
+    # location / {
+    #     proxy_pass http://127.0.0.1:3000;     # ⇦ kendi app portun
+    #     proxy_http_version 1.1;
+    #     proxy_set_header Host              $host;
+    #     proxy_set_header X-Real-IP         $remote_addr;
+    #     proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    #     proxy_set_header X-Forwarded-Proto https;
+    #     proxy_read_timeout 30s;
+    #     proxy_connect_timeout 5s;
+    # }
+}
