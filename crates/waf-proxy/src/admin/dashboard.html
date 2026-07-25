@@ -228,10 +228,44 @@
       <button class="cli-btn panic" id="panic-btn">⚠ PANIC · go Extreme</button>
     </div>
 
+    <div class="card">
+      <div class="card-head">
+        <h3 class="card-title">Capacity &amp; auto-escalation</h3>
+        <span class="card-meta mut">crisis valve · tarpit · datacenter</span>
+      </div>
+      <div class="gauge-wrap">
+        <div class="gauge-head">
+          <span class="gauge-label">Global in-flight saturation</span>
+          <span class="gauge-pct" id="inflight-sat-pct">0%</span>
+        </div>
+        <div class="gauge"><div class="gauge-fill" id="inflight-sat-bar"></div><span class="gauge-mark" style="left:70%"></span></div>
+        <div class="gauge-foot mut"><span id="inflight-cur">0</span> in-flight · cap <span id="inflight-cap">0</span> · auto-UAM escalates past the 70% mark</div>
+      </div>
+      <div class="grid-2" style="margin-top:16px;">
+        <div>
+          <label class="form-label">Global in-flight cap (0 = off · last line before OOM)</label>
+          <div class="form-row">
+            <input id="global-inflight-cap" type="number" min="0" max="1000000">
+            <button class="cli-btn" data-save="capacity">Save</button>
+          </div>
+          <label class="form-label">Tarpit score (block → socket-holding tarpit at/above)</label>
+          <div class="form-row">
+            <input id="tarpit-score" type="number" min="0" max="9999">
+          </div>
+        </div>
+        <div>
+          <label class="tog">
+            <span>Datacenter / cloud ASN penalty<br><span class="mut" style="font-size:10.5px;">score hosting-range sources (OVH · Hetzner · AWS · GCP · Azure …)</span></span>
+            <input id="datacenter-block" type="checkbox"><span class="switch"></span>
+          </label>
+        </div>
+      </div>
+    </div>
+
     <div class="grid-2">
       <div class="card">
         <div class="card-head"><h3 class="card-title">Auto-UAM watchdog</h3></div>
-        <p class="mut">Sample window 5s · escalates when blocks/sec exceed the threshold, de-escalates at ¼ of it. 30s cool-down between level changes.</p>
+        <p class="mut">Sample window 5s · escalates when blocks/sec cross the threshold <b>or</b> global in-flight saturation passes 70% — reacting at the leading edge of a flood, before blocks pile up. De-escalates only when <b>both</b> signals calm. 30s cool-down between changes.</p>
         <label class="tog"><span>Enable auto-UAM</span><input id="auto-uam-on" type="checkbox"><span class="switch"></span></label>
         <label class="form-label">Escalate threshold (blocks per second)</label>
         <div class="form-row">
@@ -249,7 +283,7 @@
           <button class="seg-btn" data-cm="2">Combined</button>
         </div>
         <div class="mut" style="margin-top:10px; font-size:11px;">
-          PoW = browser solves a SHA-256 proof. Interactive = real captcha (Turnstile / hCaptcha). Combined = silent BIC + interactive.
+          PoW = browser solves a SHA-256 proof; its difficulty is bound into the token signature and <b>scales up one step under High / Extreme UAM</b> so bots pay more mid-attack while real browsers still clear it in ~1s. Interactive = real captcha (Turnstile / hCaptcha). Combined = silent BIC + interactive.
         </div>
       </div>
     </div>
@@ -276,12 +310,12 @@
       <div class="toggles" id="defense-toggles"></div>
       <p class="mut" style="margin-top:14px; font-size:11px; line-height:1.7;">
         <b>Bot score</b> — header completeness, UA / sec-ch-ua consistency, modern browser fingerprints.<br>
-        <b>Behavior</b> — per-IP URL diversity, inter-arrival regularity, method bias, UA churn.<br>
+        <b>Behavior</b> — per-IP URL diversity, inter-arrival regularity, method bias, UA churn, and path-enumeration / fuzzing (scanner detection). Context-aware: a genuine browser's timer polling and sub-resource fan-out are recognised and left alone (no false positives).<br>
         <b>DDoS patterns</b> — GET-with-body, empty Connection, CORS-less OPTIONS, cache-buster spam, NUL bytes, query bloat.<br>
         <b>Honeypots</b> — instant ban on requests to <code>/.env</code>, <code>/wp-config.php</code>, scanner trap paths.<br>
-        <b>Subnet</b> — /24 (IPv4) and /64 (IPv6) rate &amp; in-flight ceiling, catches botnets sharing a subnet.<br>
-        <b>Replay</b> — same (method+path+UA) hash hammered 25× from one IP in 30s.<br>
-        <b>Distributed UA</b> — single User-Agent observed from 8+ distinct IPs in 60s (botnet signature).<br>
+        <b>Subnet</b> — /24 (IPv4) and /64 (IPv6) rate &amp; in-flight ceiling, catches botnets sharing a subnet. The per-IP rate limit also keys IPv6 by /64, so address rotation inside an allocation can't reset it.<br>
+        <b>Replay</b> — same (method+path+UA) hash hammered 25× from one IP in 30s. Real-browser polling is exempt.<br>
+        <b>Distributed UA</b> — single User-Agent from 8+ distinct <em>non-browser</em> IPs in 60s (botnet signature). A popular browser UA shared by many real visitors never counts.<br>
         <b>Good-bot whitelist</b> — Googlebot / Bingbot / Yandex / Baidu / Apple / Meta / LinkedIn / Twitter / Discord / DuckDuckGo with reverse-DNS verification. Spoofers add +60 score; first-hit pending bots get a lenient pass.<br>
         <b>Silent BIC</b> — invisible browser integrity check served before the heavyweight PoW. Real browsers complete a tiny SHA-256 probe in &lt;100 ms and get a HMAC-signed cookie tied to their /24; bots that don't run JS never receive it.
       </p>

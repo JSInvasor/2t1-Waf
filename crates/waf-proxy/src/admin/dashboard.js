@@ -100,6 +100,11 @@ function maskToken(t) {
   if (t.length <= 12) return t;
   return t.slice(0, 6) + "…" + t.slice(-4);
 }
+// Set an input's value without stomping on what the operator is typing.
+function setVal(sel, v) {
+  const el = $(sel);
+  if (el && document.activeElement !== el) el.value = v ?? "";
+}
 
 let toastTimer;
 function toast(msg, kind = "ok") {
@@ -358,10 +363,10 @@ function apply(data) {
   updateDstat(m, data.in_flight_total || 0);
 
   // defense
-  applyDefense(rt, m);
+  applyDefense(rt, m, data);
 }
 
-function applyDefense(rt, m) {
+function applyDefense(rt, m, data) {
   const lvl = rt.uam_level ?? 0;
   $("#uam-current").textContent = "level " + lvl + " · " + (UAM_NAMES[lvl] || "?");
   $$(".uam-lvl").forEach(b => b.dataset.active = (parseInt(b.dataset.uam,10) === lvl) ? "1" : "0");
@@ -396,9 +401,27 @@ function applyDefense(rt, m) {
   const ds = rt.defenses || {};
   $$("[data-defense]").forEach(inp => inp.checked = !!ds[inp.dataset.defense]);
 
+  // capacity & auto-escalation
+  setVal("#global-inflight-cap", rt.global_inflight_cap);
+  setVal("#tarpit-score", rt.tarpit_score);
+  if ($("#datacenter-block")) $("#datacenter-block").checked = !!rt.datacenter_block;
+
+  // live in-flight saturation gauge (mirrors the auto-UAM watchdog signal)
+  const cap = rt.global_inflight_cap || 0;
+  const cur = (data && data.in_flight_total) || 0;
+  const satPct = cap > 0 ? Math.min(100, Math.round(cur * 100 / cap)) : 0;
+  if ($("#inflight-sat-pct")) {
+    $("#inflight-sat-pct").textContent = cap ? satPct + "%" : "—";
+    $("#inflight-sat-pct").style.color = satPct >= 70 ? "var(--bad)" : satPct >= 40 ? "var(--warn)" : "";
+  }
+  if ($("#inflight-sat-bar")) $("#inflight-sat-bar").style.width = satPct + "%";
+  if ($("#inflight-cur")) $("#inflight-cur").textContent = cur.toLocaleString();
+  if ($("#inflight-cap")) $("#inflight-cap").textContent = cap ? cap.toLocaleString() : "off";
+  if ($("#subnets-tracked") && data) $("#subnets-tracked").textContent = (data.subnets_tracked || 0).toLocaleString();
+
   // subnet ceilings
-  if ($("#subnet-rpm"))  $("#subnet-rpm").value  = rt.subnet_rpm  ?? "";
-  if ($("#subnet-conn")) $("#subnet-conn").value = rt.subnet_conn ?? "";
+  setVal("#subnet-rpm",  rt.subnet_rpm);
+  setVal("#subnet-conn", rt.subnet_conn);
   // honeypot path list (only fill when not focused)
   const hp = $("#honeypot-paths");
   const paths = rt.honeypot_paths || [];
@@ -676,6 +699,10 @@ document.addEventListener("change", async e => {
     await patchRuntime({ auto_uam_enabled: e.target.checked });
     toast(e.target.checked ? "Auto-UAM watching" : "Auto-UAM off");
   }
+  if (e.target.id === "datacenter-block") {
+    await patchRuntime({ datacenter_block: e.target.checked });
+    toast(e.target.checked ? "Datacenter penalty ON" : "Datacenter penalty off");
+  }
 });
 
 // Range pill clicks (Live / 30m / 1h / 6h / 24h)
@@ -823,6 +850,14 @@ document.addEventListener("click", async e => {
   // Auto-UAM threshold save
   if (e.target.matches('[data-save="auto-uam"]')) {
     await patchRuntime({ auto_uam_threshold: parseInt($("#auto-uam-threshold").value, 10) });
+    return;
+  }
+  // Capacity save (global in-flight cap + tarpit score)
+  if (e.target.matches('[data-save="capacity"]')) {
+    await patchRuntime({
+      global_inflight_cap: parseInt($("#global-inflight-cap").value, 10),
+      tarpit_score:        parseInt($("#tarpit-score").value, 10),
+    });
     return;
   }
   // Subnet ceilings save

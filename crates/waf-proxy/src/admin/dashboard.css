@@ -824,3 +824,23 @@ input:focus, textarea:focus{ border-color:var(--ink); background:var(--paper); }
   .topbar{ padding:14px 20px; }
   .wrap{ padding:0 20px; }
 }
+
+/* ============ saturation gauge (Defense · capacity card) ============ */
+.gauge-wrap{ margin-top:2px; }
+.gauge-head{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px; }
+.gauge-label{ font-family:'Outfit', sans-serif; font-weight:300; font-size:12px; color:var(--ink-soft); }
+.gauge-pct{ font-family:'JetBrains Mono', monospace; font-weight:500; font-size:16px; transition:color .3s ease; }
+.gauge{
+  position:relative; height:10px; border-radius:999px;
+  background:var(--bg-2); border:1px solid var(--hair-2);
+}
+.gauge-fill{
+  position:absolute; left:0; top:0; height:100%; width:0%; border-radius:999px;
+  background:linear-gradient(90deg, var(--ok), var(--warn) 62%, var(--bad));
+  transition:width .45s cubic-bezier(.4,0,.2,1);
+}
+.gauge-mark{
+  position:absolute; top:-4px; width:2px; height:18px;
+  background:var(--ink); opacity:.4; border-radius:2px;
+}
+.gauge-foot{ margin-top:8px; font-size:10.5px; }
