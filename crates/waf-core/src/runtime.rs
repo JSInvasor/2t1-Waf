@@ -42,6 +42,16 @@ pub struct Runtime {
     /// Azure ranges) are dropped or scored as suspicious depending on
     /// UAM level.
     pub datacenter_block: AtomicBool,
+    /// Hard "Under-Attack lockdown" / default-deny. When ON, every request
+    /// that can't prove it's a real browser (valid clearance/BIC cookie, or a
+    /// `Trusted` browser-integrity verdict) is sent to the invisible challenge,
+    /// and requests with a *forged* browser fingerprint are blocked outright.
+    /// Verified good bots stay exempt. Flipped manually, or driven
+    /// automatically by the auto-UAM watchdog (see `auto_lockdown`).
+    pub lockdown: AtomicBool,
+    /// When ON (default), `lockdown_active()` also returns true once the UAM
+    /// level reaches High/Extreme, so a severe attack auto-engages the gate.
+    pub auto_lockdown: AtomicBool,
 
     pub rules: RuleToggles,
     pub defenses: DefenseToggles,
@@ -86,6 +96,9 @@ pub struct DefenseToggles {
     /// Silent Browser Integrity Check — lightweight invisible probe
     /// before the full PoW challenge.
     pub bic:       AtomicBool,
+    /// Hard browser-integrity verdict (UA ↔ Client-Hints ↔ Fetch-Metadata ↔
+    /// Accept ↔ JA3/JA4 cross-checks). Drives the lockdown gate.
+    pub browser_integrity: AtomicBool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,6 +141,8 @@ pub struct PersistedRuntime {
     #[serde(default)] pub global_inflight_cap: Option<u32>,
     #[serde(default)] pub tarpit_score:        Option<u32>,
     #[serde(default)] pub datacenter_block:    Option<bool>,
+    #[serde(default)] pub lockdown:            Option<bool>,
+    #[serde(default)] pub auto_lockdown:       Option<bool>,
     #[serde(default)] pub allow: Vec<String>,
     #[serde(default)] pub deny: Vec<String>,
     #[serde(default)] pub blocked_countries: Vec<String>,
@@ -162,6 +177,7 @@ pub struct PersistedDefenses {
     #[serde(default)] pub dist_ua:   Option<bool>,
     #[serde(default)] pub goodbot:   Option<bool>,
     #[serde(default)] pub bic:       Option<bool>,
+    #[serde(default)] pub browser_integrity: Option<bool>,
 }
 
 impl Runtime {
@@ -195,12 +211,15 @@ impl Runtime {
                 dist_ua:   AtomicBool::new(true),
                 goodbot:   AtomicBool::new(true),
                 bic:       AtomicBool::new(true),
+                browser_integrity: AtomicBool::new(true),
             },
             subnet_rpm:  AtomicU32::new(2400),
             subnet_conn: AtomicU32::new(800),
             global_inflight_cap: AtomicU32::new(20_000),
             tarpit_score:        AtomicU32::new(150),
             datacenter_block:    AtomicBool::new(false),
+            lockdown:            AtomicBool::new(false),
+            auto_lockdown:       AtomicBool::new(true),
             allow: RwLock::new(Vec::new()),
             deny: RwLock::new(Vec::new()),
             blocked_countries: RwLock::new(cfg.geoip.block_countries.clone()),
@@ -213,6 +232,18 @@ impl Runtime {
     }
 
     pub fn uam(&self) -> UamLevel { UamLevel::from_u8(self.uam_level.load(Ordering::Relaxed)) }
+
+    /// True when the hard default-deny gate should run: either the operator
+    /// flipped `lockdown` manually, or `auto_lockdown` is enabled and the UAM
+    /// level has climbed to High/Extreme (a severe, ongoing attack). In this
+    /// state nothing that fails to prove itself a real browser reaches upstream.
+    pub fn lockdown_active(&self) -> bool {
+        if self.lockdown.load(Ordering::Relaxed) {
+            return true;
+        }
+        self.auto_lockdown.load(Ordering::Relaxed)
+            && matches!(self.uam(), UamLevel::High | UamLevel::Extreme)
+    }
     pub fn challenge_mode_v(&self) -> ChallengeMode {
         ChallengeMode::from_u8(self.challenge_mode.load(Ordering::Relaxed))
     }
@@ -255,6 +286,9 @@ impl Runtime {
         if let Some(v) = p.defenses.dist_ua   { self.defenses.dist_ua.store(v, Ordering::Relaxed); }
         if let Some(v) = p.defenses.goodbot   { self.defenses.goodbot.store(v, Ordering::Relaxed); }
         if let Some(v) = p.defenses.bic       { self.defenses.bic.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.defenses.browser_integrity { self.defenses.browser_integrity.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.lockdown      { self.lockdown.store(v, Ordering::Relaxed); }
+        if let Some(v) = p.auto_lockdown { self.auto_lockdown.store(v, Ordering::Relaxed); }
         if let Some(v) = p.subnet_rpm  { self.subnet_rpm.store(v, Ordering::Relaxed); }
         if let Some(v) = p.subnet_conn { self.subnet_conn.store(v, Ordering::Relaxed); }
         if let Some(v) = p.global_inflight_cap { self.global_inflight_cap.store(v, Ordering::Relaxed); }
@@ -308,12 +342,15 @@ impl Runtime {
                 dist_ua:   Some(self.defenses.dist_ua.load(Ordering::Relaxed)),
                 goodbot:   Some(self.defenses.goodbot.load(Ordering::Relaxed)),
                 bic:       Some(self.defenses.bic.load(Ordering::Relaxed)),
+                browser_integrity: Some(self.defenses.browser_integrity.load(Ordering::Relaxed)),
             },
             subnet_rpm:  Some(self.subnet_rpm.load(Ordering::Relaxed)),
             subnet_conn: Some(self.subnet_conn.load(Ordering::Relaxed)),
             global_inflight_cap: Some(self.global_inflight_cap.load(Ordering::Relaxed)),
             tarpit_score:        Some(self.tarpit_score.load(Ordering::Relaxed)),
             datacenter_block:    Some(self.datacenter_block.load(Ordering::Relaxed)),
+            lockdown:            Some(self.lockdown.load(Ordering::Relaxed)),
+            auto_lockdown:       Some(self.auto_lockdown.load(Ordering::Relaxed)),
             honeypot_paths: None, // filled in by Engine which owns the Honeypots store
             auth_token: Some(self.auth_token.read().clone()),
             turnstile_provider: Some(self.turnstile_provider.read().clone()),

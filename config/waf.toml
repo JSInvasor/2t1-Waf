@@ -15,6 +15,15 @@ redirect_to_https_port = 0
 # Number of Pingora worker threads. 0 = number of CPU cores.
 threads = 0
 # Trust X-Forwarded-For from this many hops (0 = use socket peer).
+#
+# JA3/JA4 TLS fingerprints: when trusted_proxy_hops > 0, a TLS-terminating
+# front layer can forward the client's TLS fingerprint and the WAF uses it to
+# strengthen the browser-integrity verdict (UA <-> TLS-stack consistency).
+# Request headers checked (first found wins):
+#   JA3: cf-ja3-hash, x-ja3-hash, x-ja3    JA4: x-ja4, x-ja4-hash, cf-ja4
+# With trusted_proxy_hops = 0 these headers are IGNORED (a client could forge
+# them); the HTTP-layer browser checks then run on their own and already stop
+# curl/python/go/basic-botnet floods.
 trusted_proxy_hops = 0
 
 [upstream]
@@ -84,6 +93,25 @@ pow_difficulty = 4
 [logging]
 format = "json"
 level = "info"
+
+# ---------------------------------------------------------------------------
+# Under-Attack Lockdown (hard default-deny) — RUNTIME controls (runtime.json)
+# ---------------------------------------------------------------------------
+# Toggled via the API/dashboard, not here:
+#   lockdown            (bool)  Force default-deny now. Every request without a
+#                               valid clearance/BIC cookie must pass the
+#                               invisible browser-integrity challenge; a *forged*
+#                               browser fingerprint gets 403. Good bots exempt.
+#   auto_lockdown       (bool)  Default ON. Auto-UAM engages lockdown once it
+#                               escalates to High/Extreme, lifts it when it calms.
+#   defenses.browser_integrity (bool)  Default ON. The UA <-> Client-Hints <->
+#                               Fetch-Metadata <-> Accept <-> JA3/JA4 cross-check
+#                               that yields the trusted/unverified/forged verdict.
+# Panic switches:
+#   curl -XPOST -H "Authorization: Bearer <token>" \
+#        "http://127.0.0.1:9090/api/lockdown?on=true"   # hard lockdown now
+#   curl -XPOST -H "Authorization: Bearer <token>" \
+#        "http://127.0.0.1:9090/api/uam?panic=true"     # UAM -> Extreme
 
 [admin]
 listen = "127.0.0.1:9090"

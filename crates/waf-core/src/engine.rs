@@ -290,7 +290,75 @@ impl Engine {
             return self.finalize(ctx, Decision::allow(req_id));
         }
 
-        // 6. UAM force-challenge for fresh visitors (Medium and up).
+        // 6. Under-Attack lockdown — the hard default-deny gate. Active when the
+        //    operator flips it on, or automatically once auto-UAM reaches
+        //    High/Extreme (a severe, ongoing attack). Verified good bots already
+        //    returned Allow above, and clearance-cookie holders short-circuited
+        //    at step 5b, so by here the client is unproven.
+        //
+        //    Policy (exactly what was asked for — "either eat a 403 or get stuck
+        //    on the invisible captcha"):
+        //      • a *forged* browser fingerprint  → blocked outright (403), no
+        //        challenge page even rendered — it can't be a real user, so we
+        //        spend zero resources on it and record the offence so the IP
+        //        slides toward an auto-ban;
+        //      • everyone else (honest non-browsers AND real-looking browsers
+        //        without a clearance cookie yet) → funnelled into the invisible
+        //        browser-integrity challenge (silent BIC first, then PoW /
+        //        Turnstile). Real browsers clear it transparently; headless
+        //        flood tooling that can't run the JS stays stuck.
+        if self.runtime.lockdown_active() {
+            // A valid silent-BIC cookie already proves this client ran our JS
+            // once this window — treat it like a soft clearance and let it fall
+            // through to normal scoring rather than re-challenging every hit.
+            let bic_ok = self.runtime.defenses.bic.load(Ordering::Relaxed)
+                && ctx.cookie(self.bic.cookie_name())
+                    .map(|v| self.bic.verify_cookie(v, ctx.client_ip))
+                    .unwrap_or(false);
+
+            if !bic_ok {
+                let verdict = if self.runtime.defenses.browser_integrity.load(Ordering::Relaxed) {
+                    crate::browser_check::verify(ctx)
+                } else {
+                    // Integrity check disabled → treat everyone as unproven so
+                    // the invisible challenge still gates the door.
+                    crate::browser_check::BrowserVerdict::Unverified
+                };
+                match verdict {
+                    crate::browser_check::BrowserVerdict::Forged(why) => {
+                        let r = DecisionReason {
+                            rule_id: "BROWSER-FORGED".to_string(),
+                            category: "browser_integrity".to_string(),
+                            score: SCORE_DENY_REPUTATION,
+                            detail: format!("lockdown: {why}"),
+                        };
+                        let new_ban = self.reputations.record_offence(ctx.client_ip);
+                        tracing::warn!(
+                            request_id = %req_id, ip = %ctx.client_ip, reason = %why,
+                            banned = new_ban, "lockdown blocked forged browser fingerprint"
+                        );
+                        return self.finalize(ctx, Decision::block(req_id, 403, r));
+                    }
+                    crate::browser_check::BrowserVerdict::Unverified => {
+                        // Not provably a browser → invisible challenge (BIC →
+                        // PoW/Turnstile). Real browsers clear it transparently;
+                        // headless flood tooling that can't run JS stays stuck.
+                        let r = DecisionReason {
+                            rule_id: "LOCKDOWN".to_string(), category: "anti_ddos".to_string(),
+                            score: 100,
+                            detail: "under-attack lockdown: browser verification required".to_string(),
+                        };
+                        return self.finalize(ctx, Decision::challenge(req_id, 100, vec![r]));
+                    }
+                    // Trusted → complete, self-consistent modern browser. Fall
+                    // through to normal scoring like any other visitor.
+                    crate::browser_check::BrowserVerdict::Trusted => {}
+                }
+            }
+        }
+
+        // 6b. Legacy UAM force-challenge for fresh visitors (Medium level —
+        //     elevated but below the lockdown threshold).
         if uam.force_challenge {
             let r = DecisionReason {
                 rule_id: "UAM-FORCE".to_string(), category: "anti_ddos".to_string(),
@@ -691,7 +759,7 @@ hmac_secret = "a-very-secret-key-of-some-length"
             cookie_order: vec![],
             cookies: HashMap::new(),
             body_preview: vec![], content_length: None, country: None,
-            ja4h: String::new(),
+            ja4h: String::new(), ja3: String::new(), ja4: String::new(),
         }
     }
 
@@ -750,5 +818,88 @@ hmac_secret = "a-very-secret-key-of-some-length"
         e.runtime.add_allow("1.2.3.4").unwrap();
         let d = e.evaluate(&req("/x?id=1' OR 1=1--", "id=1' OR 1=1--"));
         assert_eq!(d.action, Action::Allow);
+    }
+
+    // Build a request with an explicit UA + header set, for lockdown tests.
+    fn req_ua(ua: &str, hdrs: &[(&str, &str)]) -> RequestCtx {
+        let mut h = HashMap::new();
+        h.insert("host".into(), "h".into());
+        h.insert("user-agent".into(), ua.into());
+        for (k, v) in hdrs { h.insert(k.to_string(), v.to_string()); }
+        let order: Vec<String> = h.keys().cloned().collect();
+        RequestCtx {
+            request_id: "t".into(),
+            client_ip: IpAddr::from([9, 9, 9, 9]),
+            method: "GET".into(),
+            uri: "/".into(), path: "/".into(), query: "".into(), host: "h".into(),
+            user_agent: ua.into(),
+            http_version: "HTTP/2.0".into(),
+            headers: h, header_order: order,
+            cookie_order: vec![], cookies: HashMap::new(),
+            body_preview: vec![], content_length: None, country: None,
+            ja4h: String::new(), ja3: String::new(), ja4: String::new(),
+        }
+    }
+
+    const LOCK_CHROME_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36";
+
+    // Under manual lockdown, a Chrome UA with no Client Hints / Fetch metadata
+    // is a forged fingerprint and must be blocked outright (no challenge).
+    #[test]
+    fn lockdown_blocks_forged_browser() {
+        let e = quiet_engine();
+        e.runtime.lockdown.store(true, Ordering::Relaxed);
+        let d = e.evaluate(&req_ua(LOCK_CHROME_UA, &[("accept", "*/*")]));
+        assert_eq!(d.action, Action::Block);
+        assert_eq!(d.reasons.first().map(|r| r.rule_id.as_str()), Some("BROWSER-FORGED"));
+    }
+
+    // Under lockdown, an honest non-browser (curl) is not "forged" but still
+    // can't be vouched for, so it is funnelled into the invisible challenge.
+    #[test]
+    fn lockdown_challenges_unverified_client() {
+        let e = quiet_engine();
+        e.runtime.lockdown.store(true, Ordering::Relaxed);
+        let d = e.evaluate(&req_ua("curl/8.4.0", &[("accept", "*/*")]));
+        assert_eq!(d.action, Action::Challenge);
+        assert_eq!(d.reasons.first().map(|r| r.rule_id.as_str()), Some("LOCKDOWN"));
+    }
+
+    // A fully-consistent modern browser passes the lockdown gate and reaches
+    // normal scoring (Allow here, since heuristics are quiet in this engine).
+    #[test]
+    fn lockdown_lets_trusted_browser_through() {
+        let e = quiet_engine();
+        e.runtime.lockdown.store(true, Ordering::Relaxed);
+        let d = e.evaluate(&req_ua(LOCK_CHROME_UA, &[
+            ("accept", "text/html,application/xhtml+xml,*/*;q=0.8"),
+            ("accept-language", "en-US,en;q=0.9"),
+            ("accept-encoding", "gzip, deflate, br"),
+            ("sec-fetch-dest", "document"),
+            ("sec-fetch-mode", "navigate"),
+            ("sec-ch-ua", "\"Chromium\";v=\"123\", \"Not?A_Brand\";v=\"24\""),
+            ("sec-ch-ua-mobile", "?0"),
+        ]));
+        assert_eq!(d.action, Action::Allow, "trusted browser must pass lockdown, got {:?}", d.reasons);
+    }
+
+    // Auto-lockdown: reaching UAM High flips the gate on with no manual toggle.
+    #[test]
+    fn uam_high_auto_engages_lockdown() {
+        let e = quiet_engine();
+        assert!(!e.runtime.lockdown.load(Ordering::Relaxed));
+        e.runtime.uam_level.store(3, Ordering::Relaxed); // High
+        assert!(e.runtime.lockdown_active(), "UAM High must auto-engage lockdown");
+        let d = e.evaluate(&req_ua(LOCK_CHROME_UA, &[("accept", "*/*")]));
+        assert_eq!(d.action, Action::Block, "forged browser blocked under auto-lockdown");
+    }
+
+    // With auto_lockdown disabled, UAM High no longer forces the hard gate.
+    #[test]
+    fn auto_lockdown_can_be_disabled() {
+        let e = quiet_engine();
+        e.runtime.auto_lockdown.store(false, Ordering::Relaxed);
+        e.runtime.uam_level.store(3, Ordering::Relaxed);
+        assert!(!e.runtime.lockdown_active());
     }
 }

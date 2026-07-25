@@ -57,7 +57,7 @@ mod tests {
             host: "h".into(), user_agent: "".into(),
             headers: HashMap::new(), cookies: HashMap::new(),
             http_version: "HTTP/1.1".into(), header_order: vec![], cookie_order: vec![], body_preview: body.as_bytes().to_vec(),
-            content_length: None, country: None, ja4h: String::new(),
+            content_length: None, country: None, ja4h: String::new(), ja3: String::new(), ja4: String::new(),
         }
     }
 

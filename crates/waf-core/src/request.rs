@@ -34,6 +34,14 @@ pub struct RequestCtx {
     /// JA4H fingerprint (HTTP-layer client signature). Pre-computed by the
     /// proxy when building the context so multiple modules can read it cheap.
     pub ja4h: String,
+    /// JA3 TLS fingerprint (MD5 hex), if a TLS-terminating front layer
+    /// forwarded it (e.g. `cf-ja3-hash` / `x-ja3-hash`). Empty when not
+    /// available. Pingora's `ProxyHttp` trait can't expose the raw
+    /// ClientHello on its own, so this is the hook for a front layer.
+    pub ja3: String,
+    /// JA4 TLS fingerprint (FoxIO format), if forwarded by the front layer
+    /// (`x-ja4`). Empty when not available.
+    pub ja4: String,
 }
 
 impl RequestCtx {

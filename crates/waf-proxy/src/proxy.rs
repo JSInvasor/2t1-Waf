@@ -219,6 +219,26 @@ fn build_request_ctx(session: &Session, engine: &Engine) -> RequestCtx {
         &method, &http_version, &header_order, &headers, &cookie_order, &cookies,
     );
 
+    // JA3/JA4 TLS fingerprints, if a TLS-terminating front layer forwarded
+    // them. Trusted ONLY when `trusted_proxy_hops > 0` — otherwise a client
+    // could just send `x-ja3-hash: <a-browser's-hash>` to fake a clean TLS
+    // fingerprint. With no trusted front, we ignore them and fall back to the
+    // HTTP-layer browser checks (which need no TLS data and already stop
+    // curl/python/go/basic-botnet floods).
+    let (ja3, ja4) = if engine.cfg.server.trusted_proxy_hops > 0 {
+        let ja3 = headers.get("cf-ja3-hash")
+            .or_else(|| headers.get("x-ja3-hash"))
+            .or_else(|| headers.get("x-ja3"))
+            .cloned().unwrap_or_default();
+        let ja4 = headers.get("x-ja4")
+            .or_else(|| headers.get("x-ja4-hash"))
+            .or_else(|| headers.get("cf-ja4"))
+            .cloned().unwrap_or_default();
+        (ja3, ja4)
+    } else {
+        (String::new(), String::new())
+    };
+
     RequestCtx {
         request_id: gen_request_id(),
         client_ip,
@@ -230,6 +250,8 @@ fn build_request_ctx(session: &Session, engine: &Engine) -> RequestCtx {
         content_length,
         country: None,
         ja4h,
+        ja3,
+        ja4,
     }
 }
 

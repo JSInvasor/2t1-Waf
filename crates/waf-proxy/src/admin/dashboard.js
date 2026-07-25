@@ -78,6 +78,7 @@ const DEFENSE_KEYS = [
   ["dist_ua",   "Distributed UA (botnet signature)"],
   ["goodbot",   "Good-bot whitelist (reverse-DNS verified)"],
   ["bic",       "Silent BIC (invisible browser integrity check)"],
+  ["browser_integrity", "Browser integrity (UA / client-hints / JA3-JA4 verdict)"],
 ];
 function navigate() {
   const hash = location.hash.replace("#/", "") || "overview";

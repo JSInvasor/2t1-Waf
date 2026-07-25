@@ -440,6 +440,8 @@ fn route_api(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
                 #[serde(default)] global_inflight_cap: Option<u32>,
                 #[serde(default)] tarpit_score:        Option<u32>,
                 #[serde(default)] datacenter_block:    Option<bool>,
+                #[serde(default)] lockdown:            Option<bool>,
+                #[serde(default)] auto_lockdown:       Option<bool>,
                 #[serde(default)] rules: Option<RulesPatch>,
                 #[serde(default)] defenses: Option<DefensesPatch>,
                 #[serde(default)] blocked_countries: Option<Vec<String>>,
@@ -469,6 +471,7 @@ fn route_api(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
                 #[serde(default)] dist_ua:   Option<bool>,
                 #[serde(default)] goodbot:   Option<bool>,
                 #[serde(default)] bic:       Option<bool>,
+                #[serde(default)] browser_integrity: Option<bool>,
             }
             let patch: Patch = match serde_json::from_slice(&req.body) {
                 Ok(p) => p,
@@ -504,12 +507,15 @@ fn route_api(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
                 if let Some(v) = dp.dist_ua   { r.defenses.dist_ua.store(v, Ordering::Relaxed); }
                 if let Some(v) = dp.goodbot   { r.defenses.goodbot.store(v, Ordering::Relaxed); }
                 if let Some(v) = dp.bic       { r.defenses.bic.store(v, Ordering::Relaxed); }
+                if let Some(v) = dp.browser_integrity { r.defenses.browser_integrity.store(v, Ordering::Relaxed); }
             }
             if let Some(v) = patch.subnet_rpm  { r.subnet_rpm.store(v, Ordering::Relaxed); }
             if let Some(v) = patch.subnet_conn { r.subnet_conn.store(v, Ordering::Relaxed); }
             if let Some(v) = patch.global_inflight_cap { r.global_inflight_cap.store(v, Ordering::Relaxed); }
             if let Some(v) = patch.tarpit_score        { r.tarpit_score.store(v, Ordering::Relaxed); }
             if let Some(v) = patch.datacenter_block    { r.datacenter_block.store(v, Ordering::Relaxed); }
+            if let Some(v) = patch.lockdown            { r.lockdown.store(v, Ordering::Relaxed); }
+            if let Some(v) = patch.auto_lockdown       { r.auto_lockdown.store(v, Ordering::Relaxed); }
             if let Some(paths) = patch.honeypot_paths {
                 engine.honeypots.replace(paths);
             }
@@ -534,6 +540,15 @@ fn route_api(req: &ParsedReq, engine: &Engine) -> (u16, &'static str, Vec<u8>) {
             engine.runtime.uam_level.store(level, std::sync::atomic::Ordering::Relaxed);
             let _ = engine.runtime.persist();
             ok_json(format!(r#"{{"uam_level":{level}}}"#).into_bytes())
+        }
+        ("POST", "/api/lockdown") => {
+            // Hard default-deny: ?on=true|false. Anyone without a clearance /
+            // BIC cookie must pass the invisible browser-integrity challenge,
+            // and forged browser fingerprints are blocked outright.
+            let on = req.query.get("on").map(|v| v == "true").unwrap_or(false);
+            engine.runtime.lockdown.store(on, std::sync::atomic::Ordering::Relaxed);
+            let _ = engine.runtime.persist();
+            ok_json(format!(r#"{{"lockdown":{on}}}"#).into_bytes())
         }
         ("POST", "/api/under_attack") => {
             let on = req.query.get("on").map(|v| v == "true").unwrap_or(false);

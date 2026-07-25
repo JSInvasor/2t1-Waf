@@ -55,7 +55,7 @@ mod tests {
             method: "GET".into(), uri: format!("/x?{query}"), path: "/x".into(),
             query: query.into(), host: "h".into(), user_agent: "".into(),
             headers: HashMap::new(), cookies: HashMap::new(),
-            http_version: "HTTP/1.1".into(), header_order: vec![], cookie_order: vec![], body_preview: vec![], content_length: None, country: None, ja4h: String::new(),
+            http_version: "HTTP/1.1".into(), header_order: vec![], cookie_order: vec![], body_preview: vec![], content_length: None, country: None, ja4h: String::new(), ja3: String::new(), ja4: String::new(),
         }
     }
 
